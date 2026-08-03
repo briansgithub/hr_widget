@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_preview"
+        android:icon="@android:drawable/ic_menu_view"
+        android:title="Preview" />
+    <item
+        android:id="@+id/nav_status"
+        android:icon="@android:drawable/ic_menu_info_details"
+        android:title="Status" />
+    <item
+        android:id="@+id/nav_servers"
+        android:icon="@android:drawable/ic_menu_sort_by_size"
+        android:title="Servers" />
+    <item
+        android:id="@+id/nav_pulse"
+        android:checkable="true"
+        android:title="Pulse Animation" />
+</menu>
