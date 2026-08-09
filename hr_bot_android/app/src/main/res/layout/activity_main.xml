@@ -76,6 +76,14 @@
         android:layout_marginTop="8dp" />
 
     <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/switchShowBpm"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Show BPM Number"
+        android:textColor="#FFFFFF"
+        android:layout_marginTop="8dp" />
+
+    <com.google.android.material.switchmaterial.SwitchMaterial
         android:id="@+id/switchNewThresholds"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

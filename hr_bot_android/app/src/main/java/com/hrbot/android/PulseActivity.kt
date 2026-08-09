@@ -13,6 +13,7 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import kotlin.math.PI
 import kotlin.math.sin
@@ -20,6 +21,7 @@ import kotlin.math.sin
 class PulseActivity : AppCompatActivity() {
 
     private lateinit var pulseContainer: View
+    private lateinit var pulseBpmText: TextView
     private var service: HeartRateService? = null
     private var bound = false
 
@@ -40,8 +42,16 @@ class PulseActivity : AppCompatActivity() {
 
     private val pulseRunnable = object : Runnable {
         override fun run() {
+            val showBpm = service?.isShowBpmEnabled ?: true
+            
             if (currentBpmValue <= 0) {
-                pulseContainer.setBackgroundColor(Color.BLACK)
+                pulseContainer.setBackgroundColor(Color.parseColor("#333333"))
+                if (showBpm) {
+                    pulseBpmText.text = "??"
+                    pulseBpmText.visibility = View.VISIBLE
+                } else {
+                    pulseBpmText.visibility = View.GONE
+                }
                 animationHandler.postDelayed(this, 100)
                 return
             }
@@ -68,6 +78,13 @@ class PulseActivity : AppCompatActivity() {
             val b = (Color.blue(baseColor) * brightness).toInt()
 
             pulseContainer.setBackgroundColor(Color.rgb(r, g, b))
+            
+            if (showBpm) {
+                pulseBpmText.text = currentBpmValue.toString()
+                pulseBpmText.visibility = View.VISIBLE
+            } else {
+                pulseBpmText.visibility = View.GONE
+            }
 
             animationHandler.postDelayed(this, 16)
         }
@@ -100,6 +117,7 @@ class PulseActivity : AppCompatActivity() {
         
         setContentView(R.layout.activity_pulse)
         pulseContainer = findViewById(R.id.pulseContainer)
+        pulseBpmText = findViewById(R.id.pulseBpmText)
 
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: MotionEvent): Boolean {

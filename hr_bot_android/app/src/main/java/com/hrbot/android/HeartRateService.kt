@@ -15,8 +15,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import android.graphics.Color
+import com.hrbot.android.MainActivity
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -90,12 +92,26 @@ class HeartRateService : Service() {
     // ── State ────────────────────────────────────────────────────────
 
     private val handler = Handler(Looper.getMainLooper())
+    private var wakeLock: PowerManager.WakeLock? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var scanner: BluetoothLeScanner? = null
     private var gatt: BluetoothGatt? = null
     private var scanning = false
     var currentBpm = 0
         private set
+    private var lastHrTimestamp = 0L
+    private val STALE_TIMEOUT = 45_000L
+
+    private val stalenessRunnable = object : Runnable {
+        override fun run() {
+            if (currentBpm > 0 && System.currentTimeMillis() - lastHrTimestamp > STALE_TIMEOUT) {
+                log("Heart rate data stale (45s). Neutralizing.")
+                updateBpm(0)
+            }
+            handler.postDelayed(this, 5000)
+        }
+    }
+
     private var firstAttempt = true
 
     // Discord state
@@ -104,6 +120,8 @@ class HeartRateService : Service() {
     var isNewThresholdsEnabled = true
         private set
     var isFloatingEnabled = false
+        private set
+    var isShowBpmEnabled = true
         private set
     private var floatingManager: FloatingWidgetManager? = null
     private var discordSocket: WebSocket? = null
@@ -128,6 +146,10 @@ class HeartRateService : Service() {
         loadGuildSettings()
         loadThresholdSettings()
         loadFloatingSettings()
+        loadShowBpmSettings()
+        
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HRBot:TrackingWakeLock")
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, buildNotification("Ready"), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
@@ -146,6 +168,7 @@ class HeartRateService : Service() {
         }
     }
 
+    @SuppressLint("MissingPermission")
     override fun onDestroy() {
         log("Service being destroyed. Cleaning up...")
         stopScan()
@@ -155,6 +178,12 @@ class HeartRateService : Service() {
         gatt?.close()
         gatt = null
         
+        wakeLock?.let {
+            if (it.isHeld) it.release()
+        }
+        wakeLock = null
+        
+        handler.removeCallbacks(stalenessRunnable)
         heartbeatRunnable?.let { discordHandler.removeCallbacks(it) }
         discordHandler.removeCallbacks(presenceRunnable)
         super.onDestroy()
@@ -179,12 +208,26 @@ class HeartRateService : Service() {
             return
         }
         if (scanning) return
+        
+        if (wakeLock?.isHeld == false) {
+            wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours max
+        }
+        
+        handler.removeCallbacks(stalenessRunnable)
+        handler.post(stalenessRunnable)
+        
         startScan()
     }
 
+    @SuppressLint("MissingPermission")
     fun stopTracking() {
         log("Stopping all processes...")
         stopScan()
+        
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+        }
+        handler.removeCallbacks(stalenessRunnable)
         
         currentBpm = 0
         handler.post {
@@ -244,12 +287,25 @@ class HeartRateService : Service() {
                 floatingManager = FloatingWidgetManager(this)
             }
             floatingManager?.show()
+            floatingManager?.setShowBpm(isShowBpmEnabled)
             floatingManager?.updateBpm(currentBpm)
         } else {
             floatingManager?.hide()
             floatingManager = null
         }
         saveFloatingSettings()
+    }
+
+    fun toggleShowBpm(enabled: Boolean) {
+        if (isShowBpmEnabled == enabled) return
+        isShowBpmEnabled = enabled
+        floatingManager?.setShowBpm(enabled)
+        saveShowBpmSettings()
+        
+        // Notify UI callbacks so activities can update
+        handler.post {
+            uiCallbacks.forEach { it.onBpmUpdate(currentBpm) }
+        }
     }
 
     fun toggleGuild(guildId: String, enabled: Boolean) {
@@ -342,6 +398,16 @@ class HeartRateService : Service() {
                 }
             }, 1000)
         }
+    }
+
+    private fun saveShowBpmSettings() {
+        val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
+        prefs.edit().putBoolean("show_bpm", isShowBpmEnabled).apply()
+    }
+
+    private fun loadShowBpmSettings() {
+        val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
+        isShowBpmEnabled = prefs.getBoolean("show_bpm", true)
     }
 
     // ── Notification ─────────────────────────────────────────────────
@@ -471,12 +537,7 @@ class HeartRateService : Service() {
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     log("Disconnected.")
-                    handler.post {
-                        currentBpm = 0
-                        uiCallbacks.forEach { it.onBpmUpdate(0) }
-                        uiCallbacks.forEach { it.onStatusUpdate("Disconnected") }
-                        updateNotification("Disconnected")
-                    }
+                    updateBpm(0)
                     g.close()
                     gatt = null
                 }
@@ -537,12 +598,23 @@ class HeartRateService : Service() {
                 }
 
                 currentBpm = bpm
-                floatingManager?.updateBpm(bpm)
-                handler.post {
-                    uiCallbacks.forEach { it.onBpmUpdate(bpm) }
-                    uiCallbacks.forEach { it.onStatusUpdate("Connected") }
-                    updateNotification("HR: $bpm BPM")
-                }
+                lastHrTimestamp = System.currentTimeMillis()
+                updateBpm(bpm)
+            }
+        }
+    }
+
+    private fun updateBpm(bpm: Int) {
+        currentBpm = bpm
+        floatingManager?.updateBpm(bpm)
+        handler.post {
+            uiCallbacks.forEach { it.onBpmUpdate(bpm) }
+            if (bpm > 0) {
+                uiCallbacks.forEach { it.onStatusUpdate("Connected") }
+                updateNotification("HR: $bpm BPM")
+            } else {
+                uiCallbacks.forEach { it.onStatusUpdate("Stale/Disconnected") }
+                updateNotification("Heart Rate Lost")
             }
         }
     }

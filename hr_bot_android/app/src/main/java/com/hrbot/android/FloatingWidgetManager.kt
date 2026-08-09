@@ -17,10 +17,12 @@ class FloatingWidgetManager(private val context: Context) {
 
     private var windowManager: WindowManager? = null
     private var floatingView: View? = null
+    private var bpmTextView: TextView? = null
     private var isVisible = false
 
     private val handler = Handler(Looper.getMainLooper())
     private var currentBpm = 0
+    private var isShowBpm = true
     private var pulsePhase = 0f
     private var lastFrameTime = 0L
 
@@ -28,7 +30,8 @@ class FloatingWidgetManager(private val context: Context) {
         override fun run() {
             if (!isVisible || currentBpm <= 0) {
                 updateBackgroundColor(Color.parseColor("#333333"))
-                handler.postDelayed(this, 100)
+                bpmTextView?.text = "??"
+                handler.postDelayed(this, 500)
                 return
             }
 
@@ -49,6 +52,12 @@ class FloatingWidgetManager(private val context: Context) {
             val b = (Color.blue(baseColor) * brightness).toInt()
 
             updateBackgroundColor(Color.rgb(r, g, b))
+            if (isShowBpm) {
+                bpmTextView?.text = currentBpm.toString()
+                bpmTextView?.visibility = View.VISIBLE
+            } else {
+                bpmTextView?.visibility = View.GONE
+            }
 
             handler.postDelayed(this, 16)
         }
@@ -121,8 +130,16 @@ class FloatingWidgetManager(private val context: Context) {
             windowManager?.addView(floatingView, params)
             isVisible = true
             
+            bpmTextView = floatingView?.findViewById(R.id.bpm_text)
+            
             // Set initial color
             updateBackgroundColor(Color.parseColor("#333333"))
+            if (isShowBpm) {
+                bpmTextView?.text = "??"
+                bpmTextView?.visibility = View.VISIBLE
+            } else {
+                bpmTextView?.visibility = View.GONE
+            }
             
             lastFrameTime = System.currentTimeMillis()
             handler.post(pulseRunnable)
@@ -142,5 +159,39 @@ class FloatingWidgetManager(private val context: Context) {
 
     fun updateBpm(bpm: Int) {
         currentBpm = bpm
+        handler.post {
+            if (bpm > 0) {
+                if (isShowBpm) {
+                    bpmTextView?.text = bpm.toString()
+                    bpmTextView?.visibility = View.VISIBLE
+                } else {
+                    bpmTextView?.visibility = View.GONE
+                }
+            } else {
+                if (isShowBpm) {
+                    bpmTextView?.text = "??"
+                    bpmTextView?.visibility = View.VISIBLE
+                } else {
+                    bpmTextView?.visibility = View.GONE
+                }
+                updateBackgroundColor(Color.parseColor("#333333"))
+            }
+        }
+    }
+
+    fun setShowBpm(enabled: Boolean) {
+        isShowBpm = enabled
+        handler.post {
+            if (enabled) {
+                bpmTextView?.visibility = View.VISIBLE
+                if (currentBpm > 0) {
+                    bpmTextView?.text = currentBpm.toString()
+                } else {
+                    bpmTextView?.text = "??"
+                }
+            } else {
+                bpmTextView?.visibility = View.GONE
+            }
+        }
     }
 }

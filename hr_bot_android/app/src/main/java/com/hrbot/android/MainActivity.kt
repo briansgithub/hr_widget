@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchDiscord: SwitchMaterial
     private lateinit var switchPulse: SwitchMaterial
     private lateinit var switchFloating: SwitchMaterial
+    private lateinit var switchShowBpm: SwitchMaterial
     private lateinit var switchNewThresholds: SwitchMaterial
     private lateinit var serverRecyclerView: RecyclerView
 
@@ -116,6 +117,7 @@ class MainActivity : AppCompatActivity() {
         animationHandler.removeCallbacks(pulseRunnable)
         bpmText.scaleX = 1.0f
         bpmText.scaleY = 1.0f
+        isPulseRunning = false
     }
 
     companion object {
@@ -138,6 +140,9 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (switchFloating.isChecked != it.isFloatingEnabled) {
                     switchFloating.isChecked = it.isFloatingEnabled
+                }
+                if (switchShowBpm.isChecked != it.isShowBpmEnabled) {
+                    switchShowBpm.isChecked = it.isShowBpmEnabled
                 }
                 if (switchNewThresholds.isChecked != it.isNewThresholdsEnabled) {
                     switchNewThresholds.isChecked = it.isNewThresholdsEnabled
@@ -174,6 +179,7 @@ class MainActivity : AppCompatActivity() {
         switchDiscord = findViewById(R.id.switchDiscord)
         switchPulse = findViewById(R.id.switchPulse)
         switchFloating = findViewById(R.id.switchFloating)
+        switchShowBpm = findViewById(R.id.switchShowBpm)
         switchNewThresholds = findViewById(R.id.switchNewThresholds)
         serverRecyclerView = findViewById(R.id.serverRecyclerView)
         serverRecyclerView.layoutManager = LinearLayoutManager(this)
@@ -201,6 +207,12 @@ class MainActivity : AppCompatActivity() {
         switchDiscord.setOnCheckedChangeListener { _, isChecked ->
             if (bound) {
                 service?.toggleDiscord(isChecked)
+            }
+        }
+
+        switchShowBpm.setOnCheckedChangeListener { _, isChecked ->
+            if (bound) {
+                service?.toggleShowBpm(isChecked)
             }
         }
 
@@ -334,7 +346,7 @@ class MainActivity : AppCompatActivity() {
                 startPulseAnimation()
             }
         } else {
-            bpmText.text = "-- BPM"
+            bpmText.text = "?? BPM"
             bpmText.setTextColor(Color.WHITE)
             stopPulseAnimation()
         }
