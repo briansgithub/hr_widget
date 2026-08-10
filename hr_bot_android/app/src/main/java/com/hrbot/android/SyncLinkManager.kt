@@ -48,7 +48,7 @@ class SyncLinkManager(
         const val ROLE_MIRROR = "MIRROR"
 
         // TEMP DEBUG LOGGING (remove/disable after the test run)
-        private const val DEBUG = false
+        private const val DEBUG = true
         private fun dbg(msg: String) {
             if (DEBUG) Log.d(TAG, msg)
         }
@@ -73,6 +73,15 @@ class SyncLinkManager(
     private var server: HrSyncServer? = null
     private var clientSocket: WebSocket? = null    // active outbound (we dialed the peer)
     private var serverPeerConn: JWebSocket? = null  // active inbound (peer dialed us)
+    private var lastPingSentAt: Long = 0
+    private val heartbeatRunnable = object : Runnable {
+        override fun run() {
+            if (clientSocket != null || serverPeerConn != null) {
+                sendJson(JSONObject().apply { put("type", "ping") })
+                handler.postDelayed(this, 2000)
+            }
+        }
+    }
 
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var registeredServiceName: String? = null
@@ -109,7 +118,7 @@ class SyncLinkManager(
     fun notifyFitbitState(connected: Boolean) {
         dbg("notifyFitbitState(connected=$connected) role=$role")
         fitbitConnected = connected
-        connectedSince = if (connected) System.currentTimeMillis() else null
+        connectedSince = if (connected) System.currentTimeMillis() / 1000 else null
         if (clientSocket != null || serverPeerConn != null) {
             sendJson(statusMessage())
         }
@@ -357,8 +366,11 @@ class SyncLinkManager(
                 }
                 peerName = msg.optString("device", "peer")
                 negotiateRole(msg)
+                handler.post(heartbeatRunnable)
             }
             "status" -> negotiateRole(msg)
+            "ping" -> sendJson(JSONObject().apply { put("type", "pong") })
+            "pong" -> { /* Link is alive */ }
             "hr" -> if (role == ROLE_MIRROR) {
                 val bpm = msg.optInt("bpm", 0)
                 handler.post { onRemoteBpm(bpm) }

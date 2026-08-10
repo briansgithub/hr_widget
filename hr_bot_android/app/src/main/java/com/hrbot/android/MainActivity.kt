@@ -239,8 +239,15 @@ class MainActivity : AppCompatActivity() {
             val svc = service ?: return@setOnLongClickListener false
             if (svc.syncRole != SyncLinkManager.ROLE_UNLINKED) return@setOnLongClickListener false
 
+            val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
+            val lastIp = prefs.getString("last_sync_ip", "")
+
             val input = android.widget.EditText(this).apply {
                 hint = "192.168.1.XX"
+                if (!lastIp.isNullOrEmpty()) {
+                    setText(lastIp)
+                    setSelection(lastIp.length)
+                }
             }
             android.app.AlertDialog.Builder(this)
                 .setTitle("Manual Link (IP)")
@@ -249,6 +256,7 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("Link") { _, _ ->
                     val host = input.text.toString().trim()
                     if (host.isNotEmpty()) {
+                        prefs.edit().putString("last_sync_ip", host).apply()
                         svc.connectManualSyncLink(host)
                     }
                 }

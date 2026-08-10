@@ -226,6 +226,7 @@ class HeartRateService : Service() {
         floatingManager = null
         gatt?.close()
         gatt = null
+        syncLink?.notifyFitbitState(false)
         syncLink?.stop()
         syncLink = null
         
@@ -301,6 +302,7 @@ class HeartRateService : Service() {
             gatt?.disconnect()
             gatt?.close()
             gatt = null
+            syncLink?.notifyFitbitState(false)
             
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -513,7 +515,7 @@ class HeartRateService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun startScan() {
-        if (scanning) return
+        if (scanning || gatt != null) return
         if (syncRole == SyncLinkManager.ROLE_MIRROR) {
             log("Mirroring another device's Fitbit connection; not scanning.")
             return
@@ -547,9 +549,20 @@ class HeartRateService : Service() {
     private val scanTimeoutRunnable = Runnable {
         if (scanning) {
             stopScan()
-            log("Scan timeout (2m). Stopping to save battery.")
-            handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan Timeout") } }
-            updateNotification("Scan Timeout")
+            if (trackingRequested) {
+                log("Scan timeout (2m). Waiting 30s before persistent retry...")
+                handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan Idle...") } }
+                updateNotification("Scan Idle — Waiting to retry")
+                handler.postDelayed({
+                    if (trackingRequested && !scanning && gatt == null && syncRole != SyncLinkManager.ROLE_MIRROR) {
+                        startScan()
+                    }
+                }, 30_000)
+            } else {
+                log("Scan timeout (2m). Stopping.")
+                handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan Timeout") } }
+                updateNotification("Scan Timeout")
+            }
         }
     }
 
@@ -599,6 +612,15 @@ class HeartRateService : Service() {
                     g.close()
                     gatt = null
                     syncLink?.notifyFitbitState(false)
+                    
+                    if (trackingRequested && syncRole != SyncLinkManager.ROLE_MIRROR) {
+                        log("Persistent mode active. Restarting scan in 5s...")
+                        handler.postDelayed({
+                            if (trackingRequested && gatt == null && !scanning && syncRole != SyncLinkManager.ROLE_MIRROR) {
+                                startScan()
+                            }
+                        }, 5_000)
+                    }
                 }
             }
         }
