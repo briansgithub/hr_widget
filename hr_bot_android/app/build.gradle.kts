@@ -37,4 +37,6 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     // OkHttp for Discord Gateway WebSocket
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Embedded WebSocket server for the phone<->laptop sync link (OkHttp is client-only)
+    implementation("org.java-websocket:Java-WebSocket:1.5.7")
 }
