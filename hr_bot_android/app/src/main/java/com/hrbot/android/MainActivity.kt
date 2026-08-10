@@ -37,6 +37,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnStartHr: Button
     private lateinit var btnStopHr: Button
     private lateinit var btnPulseScreen: Button
+    private lateinit var btnLinkDevice: Button
+    private lateinit var btnPairCode: Button
+    private lateinit var syncStatusText: TextView
     private lateinit var switchDiscord: SwitchMaterial
     private lateinit var switchPulse: SwitchMaterial
     private lateinit var switchFloating: SwitchMaterial
@@ -74,6 +77,18 @@ class MainActivity : AppCompatActivity() {
         }
         override fun onGuildsUpdated(guilds: List<HeartRateService.GuildInfo>) {
             runOnUiThread { updateServerList() }
+        }
+        override fun onSyncStatusUpdate(status: String) {
+            runOnUiThread { syncStatusText.text = status }
+        }
+        override fun onSyncRoleChange(role: String, peerName: String?) {
+            runOnUiThread {
+                btnLinkDevice.text = when (role) {
+                    SyncLinkManager.ROLE_HOST -> "Sharing -> $peerName"
+                    SyncLinkManager.ROLE_MIRROR -> "Mirror <- $peerName"
+                    else -> "Link Device"
+                }
+            }
         }
     }
 
@@ -176,6 +191,9 @@ class MainActivity : AppCompatActivity() {
         btnStartHr = findViewById(R.id.btnStartHr)
         btnStopHr = findViewById(R.id.btnStopHr)
         btnPulseScreen = findViewById(R.id.btnPulseScreen)
+        btnLinkDevice = findViewById(R.id.btnLinkDevice)
+        btnPairCode = findViewById(R.id.btnPairCode)
+        syncStatusText = findViewById(R.id.syncStatusText)
         switchDiscord = findViewById(R.id.switchDiscord)
         switchPulse = findViewById(R.id.switchPulse)
         switchFloating = findViewById(R.id.switchFloating)
@@ -202,6 +220,61 @@ class MainActivity : AppCompatActivity() {
 
         btnPulseScreen.setOnClickListener {
             startActivity(Intent(this, PulseActivity::class.java))
+        }
+
+        btnLinkDevice.setOnClickListener {
+            val svc = service
+            if (svc == null) {
+                Toast.makeText(this, "Service not ready", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (svc.syncRole == SyncLinkManager.ROLE_UNLINKED) {
+                svc.requestSyncLink()
+            } else {
+                svc.disconnectSyncLink()
+            }
+        }
+
+        btnLinkDevice.setOnLongClickListener {
+            val svc = service ?: return@setOnLongClickListener false
+            if (svc.syncRole != SyncLinkManager.ROLE_UNLINKED) return@setOnLongClickListener false
+
+            val input = android.widget.EditText(this).apply {
+                hint = "192.168.1.XX"
+            }
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Manual Link (IP)")
+                .setMessage("Enter the laptop's IP address (shown in the widget's console log) to link directly without mDNS.")
+                .setView(input)
+                .setPositiveButton("Link") { _, _ ->
+                    val host = input.text.toString().trim()
+                    if (host.isNotEmpty()) {
+                        svc.connectManualSyncLink(host)
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+            true
+        }
+
+        btnPairCode.setOnClickListener {
+            val svc = service ?: return@setOnClickListener
+            val input = android.widget.EditText(this).apply {
+                setText(svc.getSyncToken())
+            }
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Pairing Code")
+                .setMessage("This code must match on both devices. Share it with the laptop app, or paste the laptop's code here to match it.")
+                .setView(input)
+                .setPositiveButton("Save") { _, _ ->
+                    val value = input.text.toString().trim()
+                    if (value.isNotEmpty()) {
+                        svc.setSyncToken(value)
+                        Toast.makeText(this, "Pairing code set", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
         }
 
         switchDiscord.setOnCheckedChangeListener { _, isChecked ->

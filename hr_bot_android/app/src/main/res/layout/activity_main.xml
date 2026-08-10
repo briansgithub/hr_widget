@@ -101,6 +101,44 @@
         android:textColor="#FFFFFF"
         style="@style/Widget.MaterialComponents.Button" />
 
+    <!-- Link with the laptop widget over the local network -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="16dp">
+
+        <Button
+            android:id="@+id/btnLinkDevice"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Link Device"
+            android:backgroundTint="#444444"
+            android:textColor="#FFFFFF"
+            style="@style/Widget.MaterialComponents.Button" />
+
+        <Button
+            android:id="@+id/btnPairCode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Pair Code"
+            android:layout_marginStart="8dp"
+            android:backgroundTint="#2a2a2a"
+            android:textColor="#bbbbbb"
+            style="@style/Widget.MaterialComponents.Button" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/syncStatusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Not linked"
+        android:textColor="#555555"
+        android:textSize="14sp"
+        android:fontFamily="sans-serif"
+        android:layout_marginTop="8dp" />
+
     <TextView
         android:id="@+id/serverListLabel"
         android:layout_width="wrap_content"

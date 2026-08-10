@@ -6,8 +6,10 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
-    <!-- Internet for Discord Gateway -->
+    <!-- Internet for Discord Gateway, and local sockets for the phone<->laptop sync link -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- Foreground service to keep BLE alive in background -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -25,6 +27,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.HRBot">
 
         <activity

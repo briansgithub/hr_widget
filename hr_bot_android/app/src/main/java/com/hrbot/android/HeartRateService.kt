@@ -66,6 +66,8 @@ class HeartRateService : Service() {
         fun onDiscordStatusUpdate(status: String)
         fun onLog(message: String)
         fun onGuildsUpdated(guilds: List<GuildInfo>)
+        fun onSyncStatusUpdate(status: String) {}
+        fun onSyncRoleChange(role: String, peerName: String?) {}
     }
 
     private val uiCallbacks = mutableSetOf<UICallback>()
@@ -124,6 +126,10 @@ class HeartRateService : Service() {
     var isShowBpmEnabled = true
         private set
     private var floatingManager: FloatingWidgetManager? = null
+    private var syncLink: SyncLinkManager? = null
+    var syncRole: String = SyncLinkManager.ROLE_UNLINKED
+        private set
+    private var trackingRequested = false
     private var discordSocket: WebSocket? = null
     private var heartbeatInterval = 41250L
     private var lastSequence: Int? = null
@@ -166,6 +172,49 @@ class HeartRateService : Service() {
         } else {
             scanner = bluetoothAdapter!!.bluetoothLeScanner
         }
+
+        syncLink = SyncLinkManager(
+            context = this,
+            deviceName = Build.MODEL ?: "Phone",
+            token = loadSyncToken(),
+            onRoleChange = { role, peerName ->
+                // Already delivered on the main thread by SyncLinkManager.
+                syncRole = role
+                uiCallbacks.forEach { it.onSyncRoleChange(role, peerName) }
+                // Resume our own BLE scan if we stopped mirroring and are still meant to be tracking.
+                if (role != SyncLinkManager.ROLE_MIRROR && trackingRequested && gatt == null && !scanning) {
+                    startScan()
+                }
+            },
+            onStatus = { text -> handler.post { uiCallbacks.forEach { it.onSyncStatusUpdate(text) } } },
+            onRemoteBpm = { bpm -> updateBpm(bpm) }
+        ).also { it.start() }
+    }
+
+    fun requestSyncLink() = syncLink?.requestLink()
+    fun connectManualSyncLink(host: String) = syncLink?.connectManual(host)
+    fun disconnectSyncLink() = syncLink?.disconnect()
+
+    fun getSyncToken(): String = loadSyncToken()
+
+    fun setSyncToken(token: String) {
+        val trimmed = token.trim()
+        if (trimmed.isEmpty()) return
+        getSharedPreferences("hr_bot_prefs", MODE_PRIVATE).edit()
+            .putString("sync_token", trimmed).apply()
+        syncLink?.updateToken(trimmed)
+    }
+
+    private fun loadSyncToken(): String {
+        val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
+        var token = prefs.getString("sync_token", null)
+        if (token.isNullOrEmpty()) {
+            // Generated locally; must be copied to the other device (or overwritten with
+            // theirs) via setSyncToken() so both sides share the same pairing code.
+            token = (100000..999999).random().toString(16)
+            prefs.edit().putString("sync_token", token).apply()
+        }
+        return token
     }
 
     @SuppressLint("MissingPermission")
@@ -177,6 +226,8 @@ class HeartRateService : Service() {
         floatingManager = null
         gatt?.close()
         gatt = null
+        syncLink?.stop()
+        syncLink = null
         
         wakeLock?.let {
             if (it.isHeld) it.release()
@@ -208,20 +259,23 @@ class HeartRateService : Service() {
             return
         }
         if (scanning) return
-        
+
+        trackingRequested = true
+
         if (wakeLock?.isHeld == false) {
             wakeLock?.acquire(24 * 60 * 60 * 1000L) // 24 hours max
         }
-        
+
         handler.removeCallbacks(stalenessRunnable)
         handler.post(stalenessRunnable)
-        
+
         startScan()
     }
 
     @SuppressLint("MissingPermission")
     fun stopTracking() {
         log("Stopping all processes...")
+        trackingRequested = false
         stopScan()
         
         if (wakeLock?.isHeld == true) {
@@ -460,6 +514,10 @@ class HeartRateService : Service() {
     @SuppressLint("MissingPermission")
     private fun startScan() {
         if (scanning) return
+        if (syncRole == SyncLinkManager.ROLE_MIRROR) {
+            log("Mirroring another device's Fitbit connection; not scanning.")
+            return
+        }
         scanning = true
         handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scanning...") } }
         log("Scanning for Charge/Fitbit...")
@@ -540,6 +598,7 @@ class HeartRateService : Service() {
                     updateBpm(0)
                     g.close()
                     gatt = null
+                    syncLink?.notifyFitbitState(false)
                 }
             }
         }
@@ -579,6 +638,7 @@ class HeartRateService : Service() {
                     handler.post { uiCallbacks.forEach { it.onStatusUpdate("Connected") } }
                     updateNotification("Connected — streaming HR")
                 }
+                syncLink?.notifyFitbitState(true)
             } else {
                 log("CCC descriptor not found — notifications may not work")
             }
@@ -600,6 +660,7 @@ class HeartRateService : Service() {
                 currentBpm = bpm
                 lastHrTimestamp = System.currentTimeMillis()
                 updateBpm(bpm)
+                syncLink?.notifyBpm(bpm)
             }
         }
     }
