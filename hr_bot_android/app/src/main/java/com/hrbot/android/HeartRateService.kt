@@ -52,7 +52,8 @@ class HeartRateService : Service() {
         private val CLIENT_CHARACTERISTIC_CONFIG: UUID =
             UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-        private const val DISCORD_TOKEN = "***REMOVED-DISCORD-TOKEN***"
+        private val DISCORD_TOKEN: String
+            get() = BuildConfig.DISCORD_TOKEN.trim()
 
         private const val DISCORD_GATEWAY_URL =
             "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -309,8 +310,16 @@ class HeartRateService : Service() {
         }
     }
 
-    fun toggleDiscord(enabled: Boolean) {
-        if (isDiscordEnabled == enabled) return
+    fun toggleDiscord(enabled: Boolean): Boolean {
+        if (isDiscordEnabled == enabled) return true
+        if (enabled && DISCORD_TOKEN.isEmpty()) {
+            isDiscordEnabled = false
+            log("Discord bot cannot start: DISCORD_TOKEN is not configured.")
+            handler.post {
+                uiCallbacks.forEach { it.onDiscordStatusUpdate("Token missing - configure DISCORD_TOKEN") }
+            }
+            return false
+        }
         isDiscordEnabled = enabled
         if (enabled) {
             if (discordSocket == null) {
@@ -319,6 +328,7 @@ class HeartRateService : Service() {
         } else {
             disconnectDiscord()
         }
+        return true
     }
 
     fun toggleNewThresholds(enabled: Boolean) {
@@ -877,7 +887,19 @@ class HeartRateService : Service() {
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             log("Discord WebSocket closed: $reason")
-            handler.post { uiCallbacks.forEach { it.onDiscordStatusUpdate("Offline") } }
+            // Discord closes with 4004 when the bot token is invalid. Treat that as
+            // a configuration error rather than a transient offline event.
+            if (code == 4004 && webSocket === discordSocket) {
+                isDiscordEnabled = false
+                discordSocket = null
+                handler.post {
+                    uiCallbacks.forEach {
+                        it.onDiscordStatusUpdate("Token invalid - update DISCORD_TOKEN")
+                    }
+                }
+            } else {
+                handler.post { uiCallbacks.forEach { it.onDiscordStatusUpdate("Offline") } }
+            }
         }
     }
 

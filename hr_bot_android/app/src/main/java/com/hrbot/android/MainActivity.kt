@@ -64,10 +64,12 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread { statusText.text = status }
         }
         override fun onDiscordStatusUpdate(status: String) {
-            runOnUiThread { 
+            runOnUiThread {
                 discordStatus.text = "Discord: $status"
-                // Ensure switch matches state if changed by Stop button
-                if (status == "Offline" && switchDiscord.isChecked) {
+                // Do not disable the user's toggle for a transient socket close:
+                // the service reconnects automatically. Only reflect a real
+                // configuration failure or an intentional service-side stop.
+                if (service?.isDiscordEnabled == false && switchDiscord.isChecked) {
                     switchDiscord.isChecked = false
                 }
             }
@@ -287,7 +289,15 @@ class MainActivity : AppCompatActivity() {
 
         switchDiscord.setOnCheckedChangeListener { _, isChecked ->
             if (bound) {
-                service?.toggleDiscord(isChecked)
+                val didApply = service?.toggleDiscord(isChecked) ?: false
+                if (isChecked && !didApply) {
+                    switchDiscord.isChecked = false
+                    Toast.makeText(
+                        this,
+                        "Discord bot token is not configured. Add DISCORD_TOKEN to local.properties.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
 

@@ -1,0 +1,3 @@
+# Copy the Discord line into local.properties (which is ignored by Git).
+# The Android SDK setting is machine-specific and can remain in local.properties.
+DISCORD_TOKEN=replace-with-your-bot-token
