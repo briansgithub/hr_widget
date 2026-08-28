@@ -36,7 +36,7 @@ class SyncLinkManager(
     private val port: Int = 8765,
     private val onRoleChange: (role: String, peerName: String?) -> Unit,
     private val onStatus: (text: String) -> Unit,
-    private val onRemoteBpm: (bpm: Int) -> Unit
+    private val onRemoteBpm: (bpm: Int, phase: Float?) -> Unit
 ) {
     companion object {
         private const val TAG = "SyncLink"
@@ -47,8 +47,9 @@ class SyncLinkManager(
         const val ROLE_HOST = "HOST"
         const val ROLE_MIRROR = "MIRROR"
 
-        // TEMP DEBUG LOGGING (remove/disable after the test run)
-        private const val DEBUG = true
+        // Verbose per-message link logging. Off by default: this fires on every
+        // ping/pong/hr frame, which is pure battery/IO burn in normal use.
+        private const val DEBUG = false
         private fun dbg(msg: String) {
             if (DEBUG) Log.d(TAG, msg)
         }
@@ -73,11 +74,19 @@ class SyncLinkManager(
     private var server: HrSyncServer? = null
     private var clientSocket: WebSocket? = null    // active outbound (we dialed the peer)
     private var serverPeerConn: JWebSocket? = null  // active inbound (peer dialed us)
-    private var lastPingSentAt: Long = 0
+    private var lastPeerActivityAt: Long = 0
     private val heartbeatRunnable = object : Runnable {
         override fun run() {
             if (clientSocket != null || serverPeerConn != null) {
                 sendJson(JSONObject().apply { put("type", "ping") })
+                
+                // Timeout check: 6 seconds of silence = peer lost
+                if (lastPeerActivityAt > 0 && System.currentTimeMillis() - lastPeerActivityAt > 6000) {
+                    dbg("Link timed out (6s silence); closing.")
+                    onPeerLost("timeout", closeSockets = true)
+                    return
+                }
+                
                 handler.postDelayed(this, 2000)
             }
         }
@@ -91,9 +100,19 @@ class SyncLinkManager(
 
     // ── Lifecycle ────────────────────────────────────────────────────
 
+    /** Holding a MulticastLock disables Wi-Fi power save, so take it only while
+     * actually browsing for peers -- not for the whole service lifetime. Our own
+     * mDNS advertisement is served by the system daemon and needs no app lock. */
+    private fun acquireMulticast() {
+        try { if (multicastLock?.isHeld != true) multicastLock?.acquire() } catch (_: Exception) {}
+    }
+
+    private fun releaseMulticast() {
+        try { if (multicastLock?.isHeld == true) multicastLock?.release() } catch (_: Exception) {}
+    }
+
     fun start() {
         dbg("start() deviceName=$deviceName port=$port token=$token")
-        try { multicastLock?.acquire() } catch (_: Exception) {}
         server = HrSyncServer(InetSocketAddress(port)).also { it.start() }
         dbg("WebSocket server listening on port $port")
         registerService()
@@ -106,7 +125,7 @@ class SyncLinkManager(
         unregisterService()
         try { server?.stop(1000) } catch (_: Exception) {}
         server = null
-        try { if (multicastLock?.isHeld == true) multicastLock.release() } catch (_: Exception) {}
+        releaseMulticast()
     }
 
     fun updateToken(newToken: String) {
@@ -123,16 +142,17 @@ class SyncLinkManager(
             sendJson(statusMessage())
         }
         if (!connected && role == ROLE_HOST) {
-            handler.post { onRemoteBpm(0) }
+            handler.post { onRemoteBpm(0, null) }
         }
     }
 
-    fun notifyBpm(bpm: Int) {
+    fun notifyBpm(bpm: Int, phase: Float? = null) {
         if (role == ROLE_HOST && (clientSocket != null || serverPeerConn != null)) {
-            dbg("relaying bpm=$bpm to $peerName")
+            dbg("relaying bpm=$bpm phase=$phase to $peerName")
             sendJson(JSONObject().apply {
                 put("type", "hr")
                 put("bpm", bpm)
+                if (phase != null) put("phase", phase)
                 put("ts", System.currentTimeMillis())
             })
         }
@@ -147,6 +167,7 @@ class SyncLinkManager(
         }
         if (linking) return
         linking = true
+        acquireMulticast()
         dbg("requestLink: browsing mDNS for peers...")
         onStatus("Searching for device...")
 
@@ -217,6 +238,7 @@ class SyncLinkManager(
         linkTimeoutRunnable?.let { handler.removeCallbacks(it) }
         linkTimeoutRunnable = null
         stopDiscoverySafely()
+        releaseMulticast()
         linking = false
     }
 
@@ -356,6 +378,9 @@ class SyncLinkManager(
 
     private fun handleIncomingMessage(raw: String) {
         val msg = try { JSONObject(raw) } catch (e: Exception) { return }
+        
+        lastPeerActivityAt = System.currentTimeMillis()
+        
         dbg("handleIncomingMessage: type=${msg.optString("type")}")
         when (msg.optString("type")) {
             "hello" -> {
@@ -373,7 +398,8 @@ class SyncLinkManager(
             "pong" -> { /* Link is alive */ }
             "hr" -> if (role == ROLE_MIRROR) {
                 val bpm = msg.optInt("bpm", 0)
-                handler.post { onRemoteBpm(bpm) }
+                val phase = if (msg.has("phase")) msg.optDouble("phase").toFloat() else null
+                handler.post { onRemoteBpm(bpm, phase) }
             }
             "bye" -> onPeerLost("peer disconnected", closeSockets = false)
         }
@@ -414,6 +440,7 @@ class SyncLinkManager(
         }
         clientSocket = null
         serverPeerConn = null
+        lastPeerActivityAt = 0
         role = ROLE_UNLINKED
         peerName = null
         handler.post {

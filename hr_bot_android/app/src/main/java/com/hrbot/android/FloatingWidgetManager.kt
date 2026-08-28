@@ -10,8 +10,8 @@ import android.os.Looper
 import android.util.Log
 import android.view.*
 import android.widget.TextView
-import kotlin.math.PI
 import kotlin.math.sin
+
 
 class FloatingWidgetManager(private val context: Context) {
 
@@ -20,47 +20,26 @@ class FloatingWidgetManager(private val context: Context) {
     private var bpmTextView: TextView? = null
     private var isVisible = false
 
-    private val handler = Handler(Looper.getMainLooper())
     private var currentBpm = 0
     private var isShowBpm = true
-    private var pulsePhase = 0f
-    private var lastFrameTime = 0L
+    private val handler = Handler(Looper.getMainLooper())
 
-    private val pulseRunnable = object : Runnable {
-        override fun run() {
-            if (!isVisible || currentBpm <= 0) {
-                updateBackgroundColor(Color.parseColor("#333333"))
-                bpmTextView?.text = "??"
-                handler.postDelayed(this, 500)
-                return
-            }
 
-            val now = System.currentTimeMillis()
-            if (lastFrameTime == 0L) lastFrameTime = now
-            val dt = (now - lastFrameTime) / 1000f
-            lastFrameTime = now
-
-            val bps = currentBpm / 60.0f
-            pulsePhase += (dt * bps * PI.toFloat() * 2f)
-
-            val pulseFactor = (sin(pulsePhase.toDouble()).toFloat() + 1f) / 2f
-            val brightness = 0.4f + (pulseFactor * 0.6f)
-
-            val baseColor = (context as? HeartRateService)?.getBpmColor(currentBpm) ?: Color.RED
-            val r = (Color.red(baseColor) * brightness).toInt()
-            val g = (Color.green(baseColor) * brightness).toInt()
-            val b = (Color.blue(baseColor) * brightness).toInt()
-
-            updateBackgroundColor(Color.rgb(r, g, b))
-            if (isShowBpm) {
-                bpmTextView?.text = currentBpm.toString()
-                bpmTextView?.visibility = View.VISIBLE
-            } else {
-                bpmTextView?.visibility = View.GONE
-            }
-
-            handler.postDelayed(this, 16)
+    fun updatePhase(phase: Float) {
+        if (!isVisible || currentBpm <= 0) {
+            updateBackgroundColor(Color.parseColor("#333333"))
+            return
         }
+
+        val pulseFactor = (sin(phase.toDouble()).toFloat() + 1f) / 2f
+        val brightness = 0.4f + (pulseFactor * 0.6f)
+
+        val baseColor = (context as? HeartRateService)?.getBpmColor(currentBpm) ?: Color.RED
+        val r = (Color.red(baseColor) * brightness).toInt()
+        val g = (Color.green(baseColor) * brightness).toInt()
+        val b = (Color.blue(baseColor) * brightness).toInt()
+
+        updateBackgroundColor(Color.rgb(r, g, b))
     }
 
     private fun updateBackgroundColor(color: Int) {
@@ -129,6 +108,7 @@ class FloatingWidgetManager(private val context: Context) {
         try {
             windowManager?.addView(floatingView, params)
             isVisible = true
+
             
             bpmTextView = floatingView?.findViewById(R.id.bpm_text)
             
@@ -140,9 +120,6 @@ class FloatingWidgetManager(private val context: Context) {
             } else {
                 bpmTextView?.visibility = View.GONE
             }
-            
-            lastFrameTime = System.currentTimeMillis()
-            handler.post(pulseRunnable)
         } catch (e: Exception) {
             isVisible = false
         }
@@ -150,7 +127,6 @@ class FloatingWidgetManager(private val context: Context) {
 
     fun hide() {
         if (!isVisible) return
-        handler.removeCallbacks(pulseRunnable)
         try {
             windowManager?.removeView(floatingView)
         } catch (e: Exception) {}

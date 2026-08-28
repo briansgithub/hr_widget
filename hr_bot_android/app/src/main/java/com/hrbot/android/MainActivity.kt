@@ -13,9 +13,12 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.widget.Button
-import kotlin.math.PI
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import kotlin.math.sin
 import android.widget.ScrollView
+import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.TextView
 import android.view.LayoutInflater
 import android.view.View
@@ -42,6 +45,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var syncStatusText: TextView
     private lateinit var switchDiscord: SwitchMaterial
     private lateinit var switchPulse: SwitchMaterial
+    private lateinit var switchHeartbeatSound: SwitchMaterial
+    private lateinit var heartbeatSoundVolumeLabel: TextView
+    private lateinit var heartbeatSoundVolumeSeekBar: SeekBar
+    private lateinit var heartbeatSoundEffectSpinner: Spinner
     private lateinit var switchFloating: SwitchMaterial
     private lateinit var switchShowBpm: SwitchMaterial
     private lateinit var switchNewThresholds: SwitchMaterial
@@ -51,10 +58,8 @@ class MainActivity : AppCompatActivity() {
     private var bound = false
 
     private var currentBpmValue = 0
-    private var pulsePhase = 0f
-    private var lastFrameTime = 0L
-    private val animationHandler = Handler(Looper.getMainLooper())
-    private var isPulseRunning = false
+    private var syncingHeartbeatSoundEffect = false
+
 
     private val uiCallback = object : HeartRateService.UICallback {
         override fun onBpmUpdate(bpm: Int) {
@@ -92,49 +97,41 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    private val pulseRunnable = object : Runnable {
-        override fun run() {
-            if (!switchPulse.isChecked || currentBpmValue <= 0) {
-                bpmText.scaleX = 1.0f
-                bpmText.scaleY = 1.0f
-                isPulseRunning = false
-                return
+        override fun onHeartbeatSoundStateChanged(enabled: Boolean, error: String?) {
+            runOnUiThread {
+                if (switchHeartbeatSound.isChecked != enabled) {
+                    switchHeartbeatSound.isChecked = enabled
+                }
+                if (error != null) {
+                    Toast.makeText(this@MainActivity, error, Toast.LENGTH_LONG).show()
+                }
             }
+        }
+        override fun onPhaseUpdate(phase: Float) {
+            runOnUiThread {
+                if (!switchPulse.isChecked || currentBpmValue <= 0) {
+                    bpmText.scaleX = 1.0f
+                    bpmText.scaleY = 1.0f
+                    return@runOnUiThread
+                }
 
-            isPulseRunning = true
-            val now = System.currentTimeMillis()
-            if (lastFrameTime == 0L) lastFrameTime = now
-            val dt = (now - lastFrameTime) / 1000f
-            lastFrameTime = now
+                // Python-equivalent scale factor:
+                // 1.0 + sin(phase) * (bpm/60) * 0.0375
+                val scaleFactor = 1.0f + (sin(phase.toDouble()).toFloat() * (currentBpmValue / 60.0f) * 0.0375f)
 
-            val bps = currentBpmValue / 60.0f
-            pulsePhase += (dt * bps * PI.toFloat() * 2f)
-
-            // Python-equivalent scale factor:
-            // 1.0 + sin(phase) * (bpm/60) * 0.0375
-            val scaleFactor = 1.0f + (sin(pulsePhase.toDouble()).toFloat() * (currentBpmValue / 60.0f) * 0.0375f)
-
-            bpmText.scaleX = scaleFactor
-            bpmText.scaleY = scaleFactor
-
-            animationHandler.postDelayed(this, 16)
+                bpmText.scaleX = scaleFactor
+                bpmText.scaleY = scaleFactor
+            }
         }
     }
 
     private fun startPulseAnimation() {
-        if (isPulseRunning) return
-        lastFrameTime = System.currentTimeMillis()
-        animationHandler.removeCallbacks(pulseRunnable)
-        animationHandler.post(pulseRunnable)
+        // Now driven by HeartRateService's onPhaseUpdate callback
     }
 
     private fun stopPulseAnimation() {
-        animationHandler.removeCallbacks(pulseRunnable)
         bpmText.scaleX = 1.0f
         bpmText.scaleY = 1.0f
-        isPulseRunning = false
     }
 
     companion object {
@@ -149,27 +146,7 @@ class MainActivity : AppCompatActivity() {
             service = localBinder.getService()
             bound = true
             service?.addCallback(uiCallback)
-
-            // Sync UI with current service state
-            service?.let {
-                if (switchDiscord.isChecked != it.isDiscordEnabled) {
-                    switchDiscord.isChecked = it.isDiscordEnabled
-                }
-                if (switchFloating.isChecked != it.isFloatingEnabled) {
-                    switchFloating.isChecked = it.isFloatingEnabled
-                }
-                if (switchShowBpm.isChecked != it.isShowBpmEnabled) {
-                    switchShowBpm.isChecked = it.isShowBpmEnabled
-                }
-                if (switchNewThresholds.isChecked != it.isNewThresholdsEnabled) {
-                    switchNewThresholds.isChecked = it.isNewThresholdsEnabled
-                }
-                // Sync current BPM if already tracking
-                if (it.currentBpm > 0) {
-                    updateBpm(it.currentBpm)
-                }
-                updateServerList()
-            }
+            syncUiFromService()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -198,11 +175,47 @@ class MainActivity : AppCompatActivity() {
         syncStatusText = findViewById(R.id.syncStatusText)
         switchDiscord = findViewById(R.id.switchDiscord)
         switchPulse = findViewById(R.id.switchPulse)
+        switchHeartbeatSound = findViewById(R.id.switchHeartbeatSound)
+        heartbeatSoundVolumeLabel = findViewById(R.id.heartbeatSoundVolumeLabel)
+        heartbeatSoundVolumeSeekBar = findViewById(R.id.heartbeatSoundVolumeSeekBar)
+        heartbeatSoundEffectSpinner = findViewById(R.id.heartbeatSoundEffectSpinner)
         switchFloating = findViewById(R.id.switchFloating)
         switchShowBpm = findViewById(R.id.switchShowBpm)
         switchNewThresholds = findViewById(R.id.switchNewThresholds)
         serverRecyclerView = findViewById(R.id.serverRecyclerView)
         serverRecyclerView.layoutManager = LinearLayoutManager(this)
+
+        heartbeatSoundEffectSpinner.adapter = ArrayAdapter(
+            this,
+            R.layout.item_heartbeat_sound_spinner,
+            HeartbeatSoundCatalog.effects.map { it.label }
+        ).apply {
+            setDropDownViewResource(R.layout.item_heartbeat_sound_spinner)
+        }
+        heartbeatSoundEffectSpinner.onItemSelectedListener =
+            object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    if (syncingHeartbeatSoundEffect || !bound) return
+                    val effect = HeartbeatSoundCatalog.effects.getOrNull(position) ?: return
+                    if (service?.selectedHeartbeatSoundEffectId == effect.id) return
+
+                    val didApply = service?.setHeartbeatSoundEffect(effect.id) ?: false
+                    if (!didApply) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Heartbeat sound could not be loaded.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
 
         btnStartHr.setOnClickListener {
             if (bound) {
@@ -214,6 +227,7 @@ class MainActivity : AppCompatActivity() {
             if (bound) {
                 service?.stopTracking()
                 switchPulse.isChecked = false
+                switchHeartbeatSound.isChecked = false
                 switchFloating.isChecked = false
                 switchDiscord.isChecked = false
                 finishAffinity()
@@ -325,6 +339,45 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        switchHeartbeatSound.setOnCheckedChangeListener { _, isChecked ->
+            if (!bound) {
+                if (isChecked) {
+                    switchHeartbeatSound.isChecked = false
+                    Toast.makeText(this, "Service not ready", Toast.LENGTH_SHORT).show()
+                }
+                return@setOnCheckedChangeListener
+            }
+
+            val didApply = service?.toggleHeartbeatSound(isChecked) ?: false
+            if (isChecked && !didApply) {
+                switchHeartbeatSound.isChecked = false
+                Toast.makeText(
+                    this,
+                    "Heartbeat sound could not be loaded.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        heartbeatSoundVolumeSeekBar.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(
+                    seekBar: SeekBar?,
+                    progress: Int,
+                    fromUser: Boolean
+                ) {
+                    updateHeartbeatSoundVolumeLabel(progress)
+                    if (fromUser && bound) {
+                        service?.setHeartbeatSoundVolume(progress)
+                    }
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+
+                override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+            }
+        )
+
         switchFloating.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 if (!checkOverlayPermission()) {
@@ -342,6 +395,54 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestPermissions()
+    }
+
+    private fun syncUiFromService() {
+        service?.let {
+            if (switchDiscord.isChecked != it.isDiscordEnabled) {
+                switchDiscord.isChecked = it.isDiscordEnabled
+            }
+            if (switchFloating.isChecked != it.isFloatingEnabled) {
+                switchFloating.isChecked = it.isFloatingEnabled
+            }
+            if (switchHeartbeatSound.isChecked != it.isHeartbeatSoundEnabled) {
+                switchHeartbeatSound.isChecked = it.isHeartbeatSoundEnabled
+            }
+            if (heartbeatSoundVolumeSeekBar.progress != it.heartbeatSoundVolumePercent) {
+                heartbeatSoundVolumeSeekBar.progress = it.heartbeatSoundVolumePercent
+            }
+            updateHeartbeatSoundVolumeLabel(it.heartbeatSoundVolumePercent)
+            syncHeartbeatSoundEffect(it.selectedHeartbeatSoundEffectId)
+            if (switchShowBpm.isChecked != it.isShowBpmEnabled) {
+                switchShowBpm.isChecked = it.isShowBpmEnabled
+            }
+            if (switchNewThresholds.isChecked != it.isNewThresholdsEnabled) {
+                switchNewThresholds.isChecked = it.isNewThresholdsEnabled
+            }
+            // Sync current BPM if already tracking
+            if (it.currentBpm > 0) {
+                updateBpm(it.currentBpm)
+            }
+            updateServerList()
+        }
+    }
+
+    // The service keeps pushing 60 FPS phase updates to every registered callback.
+    // Drop ours while backgrounded (Home, not Back -- onDestroy doesn't fire) so
+    // those ticks don't run for a window nobody can see.
+    override fun onResume() {
+        super.onResume()
+        if (bound) {
+            service?.addCallback(uiCallback)
+            syncUiFromService()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (bound) {
+            service?.removeCallback(uiCallback)
+        }
     }
 
     override fun onDestroy() {
@@ -427,6 +528,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ── UI helpers ───────────────────────────────────────────────────
+
+    private fun updateHeartbeatSoundVolumeLabel(percent: Int) {
+        heartbeatSoundVolumeLabel.text = "Heartbeat Volume: $percent%"
+    }
+
+    private fun syncHeartbeatSoundEffect(effectId: String) {
+        val selectedIndex = HeartbeatSoundCatalog.effects.indexOfFirst { it.id == effectId }
+        if (
+            selectedIndex < 0 ||
+            heartbeatSoundEffectSpinner.selectedItemPosition == selectedIndex
+        ) return
+
+        syncingHeartbeatSoundEffect = true
+        heartbeatSoundEffectSpinner.setSelection(selectedIndex, false)
+        syncingHeartbeatSoundEffect = false
+    }
 
     private fun updateBpm(bpm: Int) {
         currentBpmValue = bpm

@@ -15,7 +15,6 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import kotlin.math.PI
 import kotlin.math.sin
 
 class PulseActivity : AppCompatActivity() {
@@ -26,9 +25,7 @@ class PulseActivity : AppCompatActivity() {
     private var bound = false
 
     private var currentBpmValue = 0
-    private var pulsePhase = 0f
-    private var lastFrameTime = 0L
-    private val animationHandler = Handler(Looper.getMainLooper())
+
 
     private val uiCallback = object : HeartRateService.UICallback {
         override fun onBpmUpdate(bpm: Int) {
@@ -38,57 +35,49 @@ class PulseActivity : AppCompatActivity() {
         override fun onDiscordStatusUpdate(status: String) {}
         override fun onLog(message: String) {}
         override fun onGuildsUpdated(guilds: List<HeartRateService.GuildInfo>) {}
+        override fun onPhaseUpdate(phase: Float) {
+            runOnUiThread { updateVisuals(phase) }
+        }
     }
 
-    private val pulseRunnable = object : Runnable {
-        override fun run() {
-            val showBpm = service?.isShowBpmEnabled ?: true
-            
-            if (currentBpmValue <= 0) {
-                pulseContainer.setBackgroundColor(Color.parseColor("#333333"))
-                if (showBpm) {
-                    pulseBpmText.text = "??"
-                    pulseBpmText.visibility = View.VISIBLE
-                } else {
-                    pulseBpmText.visibility = View.GONE
-                }
-                animationHandler.postDelayed(this, 100)
-                return
-            }
-
-            val now = System.currentTimeMillis()
-            if (lastFrameTime == 0L) lastFrameTime = now
-            val dt = (now - lastFrameTime) / 1000f
-            lastFrameTime = now
-
-            val bps = currentBpmValue / 60.0f
-            pulsePhase += (dt * bps * PI.toFloat() * 2f)
-
-            // Pulse factor between 0.0 and 1.0
-            val pulseFactor = (sin(pulsePhase.toDouble()).toFloat() + 1f) / 2f
-            
-            // Brightness pulses between 0.4 and 1.0
-            val brightness = 0.4f + (pulseFactor * 0.6f)
-
-            // Constant color for the current BPM
-            val baseColor = service?.getBpmColor(currentBpmValue) ?: Color.BLACK
-
-            val r = (Color.red(baseColor) * brightness).toInt()
-            val g = (Color.green(baseColor) * brightness).toInt()
-            val b = (Color.blue(baseColor) * brightness).toInt()
-
-            pulseContainer.setBackgroundColor(Color.rgb(r, g, b))
-            
+    private fun updateVisuals(phase: Float) {
+        val showBpm = service?.isShowBpmEnabled ?: true
+        
+        if (currentBpmValue <= 0) {
+            pulseContainer.setBackgroundColor(Color.parseColor("#333333"))
             if (showBpm) {
-                pulseBpmText.text = currentBpmValue.toString()
+                pulseBpmText.text = "??"
                 pulseBpmText.visibility = View.VISIBLE
             } else {
                 pulseBpmText.visibility = View.GONE
             }
+            return
+        }
 
-            animationHandler.postDelayed(this, 16)
+        // Pulse factor between 0.0 and 1.0
+        val pulseFactor = (sin(phase.toDouble()).toFloat() + 1f) / 2f
+        
+        // Brightness pulses between 0.4 and 1.0
+        val brightness = 0.4f + (pulseFactor * 0.6f)
+
+        // Constant color for the current BPM
+        val baseColor = service?.getBpmColor(currentBpmValue) ?: Color.BLACK
+
+        val r = (Color.red(baseColor) * brightness).toInt()
+        val g = (Color.green(baseColor) * brightness).toInt()
+        val b = (Color.blue(baseColor) * brightness).toInt()
+
+        pulseContainer.setBackgroundColor(Color.rgb(r, g, b))
+        
+        if (showBpm) {
+            pulseBpmText.text = currentBpmValue.toString()
+            pulseBpmText.visibility = View.VISIBLE
+        } else {
+            pulseBpmText.visibility = View.GONE
         }
     }
+
+
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -133,14 +122,28 @@ class PulseActivity : AppCompatActivity() {
 
         val intent = Intent(this, HeartRateService::class.java)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
+    }
 
-        lastFrameTime = System.currentTimeMillis()
-        animationHandler.post(pulseRunnable)
+    // Mirrors MainActivity: drop the callback while backgrounded so the service's
+    // 60 FPS phase ticks don't run for a screen nobody can see (Home button, not
+    // double-tap-to-exit, leaves this Activity paused rather than destroyed).
+    override fun onResume() {
+        super.onResume()
+        if (bound) {
+            service?.addCallback(uiCallback)
+            currentBpmValue = service?.currentBpm ?: 0
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (bound) {
+            service?.removeCallback(uiCallback)
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        animationHandler.removeCallbacks(pulseRunnable)
         if (bound) {
             service?.removeCallback(uiCallback)
             unbindService(connection)

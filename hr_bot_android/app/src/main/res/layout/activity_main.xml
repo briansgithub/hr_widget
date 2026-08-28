@@ -68,6 +68,38 @@
         android:layout_marginTop="8dp" />
 
     <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/switchHeartbeatSound"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Heartbeat Sound"
+        android:textColor="#FFFFFF"
+        android:layout_marginTop="8dp" />
+
+    <TextView
+        android:id="@+id/heartbeatSoundVolumeLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Heartbeat Volume: 100%"
+        android:textColor="#BBBBBB"
+        android:textSize="14sp"
+        android:layout_marginTop="4dp" />
+
+    <SeekBar
+        android:id="@+id/heartbeatSoundVolumeSeekBar"
+        android:layout_width="240dp"
+        android:layout_height="wrap_content"
+        android:max="100"
+        android:progress="100"
+        android:contentDescription="Heartbeat sound volume" />
+
+    <Spinner
+        android:id="@+id/heartbeatSoundEffectSpinner"
+        android:layout_width="240dp"
+        android:layout_height="wrap_content"
+        android:contentDescription="Heartbeat sound effect"
+        android:popupBackground="#333333" />
+
+    <com.google.android.material.switchmaterial.SwitchMaterial
         android:id="@+id/switchFloating"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
