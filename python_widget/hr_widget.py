@@ -268,12 +268,12 @@ class HeartRateWidget:
         self._hibernate_enabled = False
         
         # --- HOVER CONTROLS ---
-        self.pulse_var = tk.BooleanVar(value=False)
+        self.pulse_var = tk.BooleanVar(value=True)
         self.pulse_var.trace_add("write", self._on_pulse_toggle)
         self.checkbox = self._create_toggle(self.pulse_var, "Pulse animation")
         ToolTip(self.checkbox, "Toggle visual pulse animation")
 
-        self.heartbeat_sound_var = tk.BooleanVar(value=False)
+        self.heartbeat_sound_var = tk.BooleanVar(value=True)
         self.heartbeat_sound_var.trace_add("write", self._on_heartbeat_sound_toggle)
         self.heartbeat_sound_checkbox = self._create_toggle(
             self.heartbeat_sound_var,
@@ -313,7 +313,7 @@ class HeartRateWidget:
         self.hibernate_checkbox = self._create_toggle(self.hibernate_var, "Hibernate mode")
         ToolTip(self.hibernate_checkbox, "If toggled on, hibernation is used instead of screen off")
 
-        self.screen_off_var = tk.BooleanVar(value=False)
+        self.screen_off_var = tk.BooleanVar(value=True)
         self.screen_off_var.trace_add("write", self._on_screen_off_toggle)
         self.screen_off_checkbox = self._create_toggle(self.screen_off_var, "Screen off below 65")
         ToolTip(self.screen_off_checkbox, "Enable/disable actions when BPM drops below 65 for 1 minute")
@@ -569,6 +569,7 @@ class HeartRateWidget:
         self._style_toggle(self.sync_link_checkbox, False, "Link device")
         self._on_discord_toggle()
         self._on_hibernate_toggle()
+        self._on_screen_off_toggle()
         self._style_toggle(
             self.keyboard_sync_checkbox,
             False,
