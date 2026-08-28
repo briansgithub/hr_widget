@@ -178,8 +178,8 @@ class ToolTip:
 class HeartRateWidget:
     CONTROL_REVEAL_DELAY_SECONDS = 1.5
     CONTROL_HIDE_DELAY_SECONDS = 1.0
-    CONTROL_MIN_WIDTH = 600
-    CONTROL_MIN_HEIGHT = 350
+    CONTROL_MIN_WIDTH = 650
+    CONTROL_MIN_HEIGHT = 400
 
     CONTROL_COLORS = {
         "backdrop": "#202225",
@@ -207,7 +207,7 @@ class HeartRateWidget:
         self.root = root
         self.root.title("Live HR")
         self.root.attributes("-topmost", True)
-        self.root.geometry("600x350+-180+-100")
+        self.root.geometry("650x400+-180+-100")
         
         # --- ALLOW RESIZING ---
         self.root.resizable(True, True)
@@ -728,7 +728,8 @@ class HeartRateWidget:
         levels_gap = 6
         levels_inner_width = width - 44
         scale_width = (levels_inner_width - (2 * levels_gap)) // 3
-        scale_y = height - 63
+        # Keep the sliders above the dedicated exit-button row.
+        scale_y = height - 101
 
         placements = [
             (self.checkbox, {"x": left_x, "y": 67, "width": control_width, "height": control_height}),
@@ -779,7 +780,7 @@ class HeartRateWidget:
                     "height": 54,
                 },
             ),
-            (self.exit_button, {"x": width - 76, "y": 14, "width": 60, "height": 24}),
+            (self.exit_button, {"x": width - 76, "y": height - 40, "width": 60, "height": 24}),
         ))
         return tuple(placements)
 
@@ -790,8 +791,8 @@ class HeartRateWidget:
         width = max(self.CONTROL_MIN_WIDTH, int(width))
         height = max(self.CONTROL_MIN_HEIGHT, int(height))
         right_panel_x = width - 206
-        panel_bottom = height - 72
-        levels_top = height - 66
+        panel_bottom = height - 110
+        levels_top = height - 104
 
         self.canvas.coords(
             self._bg_rect,

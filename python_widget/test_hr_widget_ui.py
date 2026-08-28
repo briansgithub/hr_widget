@@ -80,7 +80,10 @@ class _DragRoot:
 def _make_hover_widget():
     widget = HeartRateWidget.__new__(HeartRateWidget)
     widget.canvas = _Canvas()
-    widget._cached_window_size = (600, 350)
+    widget._cached_window_size = (
+        HeartRateWidget.CONTROL_MIN_WIDTH,
+        HeartRateWidget.CONTROL_MIN_HEIGHT,
+    )
     widget.controls_visible = False
     widget._cursor_left_time = None
     widget._cursor_entered_time = None
@@ -179,8 +182,8 @@ class HoverControlLayoutTests(unittest.TestCase):
             self.assertEqual(len(control.place_calls), 1)
 
         card_coords = widget.canvas.coords_by_item[widget._bg_rect]
-        self.assertEqual((min(card_coords[0::2]), max(card_coords[0::2])), (8, 592))
-        self.assertEqual((min(card_coords[1::2]), max(card_coords[1::2])), (8, 342))
+        self.assertEqual((min(card_coords[0::2]), max(card_coords[0::2])), (8, 642))
+        self.assertEqual((min(card_coords[1::2]), max(card_coords[1::2])), (8, 392))
         self.assertEqual(widget.canvas.item_options["hover_decor"]["state"], "normal")
         self.assertEqual(widget.canvas.config_calls[-1], {"cursor": "fleur"})
 
@@ -206,7 +209,13 @@ class HoverControlLayoutTests(unittest.TestCase):
         self.assertEqual((min(card_coords[0::2]), max(card_coords[0::2])), (8, 792))
         self.assertEqual((min(card_coords[1::2]), max(card_coords[1::2])), (8, 492))
         self.assertEqual(widget.exit_button.place_calls[-1]["x"], 724)
-        self.assertEqual(widget.heartbeat_volume_scale.place_calls[-1]["y"], 437)
+        self.assertEqual(widget.exit_button.place_calls[-1]["y"], 460)
+        self.assertEqual(widget.heartbeat_volume_scale.place_calls[-1]["y"], 399)
+        self.assertLess(
+            widget.heartbeat_volume_scale.place_calls[-1]["y"]
+            + widget.heartbeat_volume_scale.place_calls[-1]["height"],
+            widget.exit_button.place_calls[-1]["y"],
+        )
         self.assertLess(
             widget.min_brightness_scale.place_calls[-1]["x"],
             widget.max_brightness_scale.place_calls[-1]["x"],
