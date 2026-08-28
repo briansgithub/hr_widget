@@ -12,13 +12,13 @@
   <Identity
     Name="HRWidget.ClevoBroker.Experimental"
     Publisher="CN=HRWidget Clevo Broker Experimental"
-    Version="0.2.5.0"
+    Version="0.2.6.0"
     ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>HR Widget Clevo Broker Experimental</DisplayName>
     <PublisherDisplayName>HR Widget Experimental</PublisherDisplayName>
-    <Description>Experimental fixed-command static-lighting broker for one Clevo v1.14 installation.</Description>
+    <Description>Experimental fixed-command static-lighting broker for the exact qualified Clevo LED v7.68 installation.</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 

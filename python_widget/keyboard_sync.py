@@ -271,7 +271,7 @@ CLEVO_TARGET_ALLOWLIST: tuple[ClevoTarget, ...] = (
             r"1.14.0.0_x64__6h6z29zh29qx0\FnKey\FnKey.exe"
         ),
         led_package_name="CLEVOCO.LedKeyboardSetting",
-        led_package_version="1.14.0.0",
+        led_package_version="7.68.0.0",
         led_package_status="Ok",
         control_center_package_name="CLEVOCO.ControlCenter3.0",
         control_center_package_version="1.13.2.0",
@@ -502,8 +502,8 @@ class ClevoIpcBackend(KeyboardLightingBackend):
 
     _ALIAS = "hrclevobroker-exp.exe"
     _BACKEND_ID = "clevo-dchu-103-static-experimental"
-    _BACKEND_VERSION = "0.2.5"
-    _PACKAGE_PREFIX = "HRWidget.ClevoBroker.Experimental_0.2.5.0_x64__"
+    _BACKEND_VERSION = "0.2.6"
+    _PACKAGE_PREFIX = "HRWidget.ClevoBroker.Experimental_0.2.6.0_x64__"
     _HARDWARE_IDENTITY = "Micro Electronics Inc|1520|PB50EF-G"
     _REASON = (
         "Keyboard sync is unavailable unless this session explicitly enables "

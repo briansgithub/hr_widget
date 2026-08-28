@@ -11,7 +11,7 @@ internal static class Program
 {
     private const string ExpectedPackageName = "HRWidget.ClevoBroker.Experimental";
     private const string BackendId = "clevo-dchu-103-static-experimental";
-    private const string BackendVersion = "0.2.5";
+    private const string BackendVersion = "0.2.6";
     private const int ProtocolVersion = 1;
     private const int MaxLineBytes = 4096;
     private const int LightingCommand = 103;
@@ -19,11 +19,11 @@ internal static class Program
 
     private const string HardwareIdentity = "Micro Electronics Inc|1520|PB50EF-G";
     private const string FnKeyPath = @"C:\Program Files\WindowsApps\CLEVOCO.FnhotkeysandOSD_1.14.0.0_x64__6h6z29zh29qx0\FnKey\FnKey.exe";
-    private const string LedPackagePath = @"C:\Program Files\WindowsApps\CLEVOCO.LedKeyboardSetting_1.14.0.0_x64__6h6z29zh29qx0";
+    private const string LedPackagePath = @"C:\Program Files\WindowsApps\CLEVOCO.LedKeyboardSetting_7.68.0.0_x64__6h6z29zh29qx0";
     private const string ControlCenterPackagePath = @"C:\Program Files\WindowsApps\CLEVOCO.ControlCenter3.0_1.13.2.0_x64__6h6z29zh29qx0";
     private const string DchuDirectory = LedPackagePath + @"\CC";
     private const string DchuPath = DchuDirectory + @"\InsydeDCHU.dll";
-    private const string DchuSha256 = "98AF9793B911AB57FCBD09FD75441A120A19A529F4D18D03D83BE42DE7020A47";
+    private const string DchuSha256 = "DAB807B5D4A621893EF5C5C1941E9D8CE91DDA6B2518E931F4BB4727DFD80E98";
 
     private const int LoadLibrarySearchDefaultDirs = 0x00001000;
     private const int LoadLibrarySearchUserDirs = 0x00000400;

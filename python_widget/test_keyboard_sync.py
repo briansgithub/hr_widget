@@ -1250,7 +1250,7 @@ class ProductionSafetyTests(unittest.TestCase):
         self.assertEqual(target.system_product_name, "1520")
         self.assertEqual(target.baseboard_product, "PB50EF-G")
         self.assertEqual(target.fnkey_package_version, "1.14.0.0")
-        self.assertEqual(target.led_package_version, "1.14.0.0")
+        self.assertEqual(target.led_package_version, "7.68.0.0")
         self.assertEqual(target.control_center_package_version, "1.13.2.0")
         self.assertEqual(target.publisher_id, "6h6z29zh29qx0")
         self.assertEqual(target.required_services, {"CCDCHUService", "HKClipSvc"})
