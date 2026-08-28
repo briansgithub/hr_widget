@@ -50,21 +50,6 @@ class HeartRateService : Service() {
         private const val TAG = "HRService"
         private const val CHANNEL_ID = "hr_bot_channel"
         private const val NOTIFICATION_ID = 1
-        private const val BLE_RECONNECT_DELAY_MS = 5_000L
-        private const val BLE_SCAN_RETRY_DELAY_MS = 30_000L
-        private const val BLE_OPERATION_TIMEOUT_MS = 30_000L
-        private const val BLE_BOND_TIMEOUT_MS = 60_000L
-        private const val BLE_FIRST_PACKET_TIMEOUT_MS = 60_000L
-
-        private const val PREFS_NAME = "hr_bot_prefs"
-        private const val PREF_TRACKING_REQUESTED = "tracking_requested"
-        private const val PREF_LAST_FITBIT_ADDRESS = "last_fitbit_address"
-        private const val PREF_LAST_FITBIT_NAME = "last_fitbit_name"
-        private const val PREF_FITBIT_REPAIR_REQUIRED = "fitbit_repair_required"
-
-        // Logs every BLE advertisement seen while scanning -- hundreds per second
-        // in a busy RF environment. Debugging only; leave off in normal use.
-        private const val VERBOSE_SCAN_LOG = false
 
         // Standard Bluetooth LE Heart Rate UUIDs
         private val HR_SERVICE_UUID: UUID =
@@ -99,9 +84,6 @@ class HeartRateService : Service() {
 
     fun addCallback(cb: UICallback) {
         uiCallbacks.add(cb)
-        if (guidedRepairRequired) {
-            cb.onStatusUpdate("Reconnect Fitbit in Bluetooth settings")
-        }
     }
 
     fun removeCallback(cb: UICallback) {
@@ -141,42 +123,17 @@ class HeartRateService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var scanner: BluetoothLeScanner? = null
-    @Volatile private var gatt: BluetoothGatt? = null
+    private var gatt: BluetoothGatt? = null
     private var scanning = false
-    private var hrNotificationsReady = false
-    private var lastFitbitAddress: String? = null
-    private var lastFitbitName: String? = null
-    private var bleReconnectRunnable: Runnable? = null
-    private var gattOperationTimeoutRunnable: Runnable? = null
-    private var bondTimeoutRunnable: Runnable? = null
-    private var firstPacketTimeoutRunnable: Runnable? = null
-    private var waitingForBond = false
-    private var awaitingFirstBpm = false
-    private var consecutiveSecurityFailures = 0
-    private var guidedRepairRequired = false
     var currentBpm = 0
         private set
     private var lastBpmTimestamp = 0L
-    private var lastLocalHrTimestamp = 0L
     private val STALE_TIMEOUT = 45_000L
 
     private val stalenessRunnable = object : Runnable {
         override fun run() {
             val now = System.currentTimeMillis()
-            val activeGatt = gatt
             if (
-                trackingRequested &&
-                syncRole != SyncLinkManager.ROLE_MIRROR &&
-                activeGatt != null &&
-                hrNotificationsReady &&
-                lastLocalHrTimestamp > 0L &&
-                now - lastLocalHrTimestamp > STALE_TIMEOUT
-            ) {
-                // Android does not always emit STATE_DISCONNECTED when a peripheral
-                // disappears. A silent notification stall must recycle the GATT too;
-                // merely showing 0 BPM leaves startScan() blocked by a non-null GATT.
-                recoverGatt(activeGatt, "Heart rate stream stalled for 45s")
-            } else if (
                 currentBpm > 0 &&
                 lastBpmTimestamp > 0L &&
                 now - lastBpmTimestamp > STALE_TIMEOUT
@@ -187,8 +144,6 @@ class HeartRateService : Service() {
             handler.postDelayed(this, 5000)
         }
     }
-
-    private var firstAttempt = true
 
     // Discord state
     var isDiscordEnabled = false
@@ -282,94 +237,6 @@ class HeartRateService : Service() {
         }
     }
 
-    private val bluetoothStateReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
-            when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
-                BluetoothAdapter.STATE_TURNING_OFF,
-                BluetoothAdapter.STATE_OFF -> {
-                    // Keep trackingRequested intact so STATE_ON can resume without
-                    // requiring another tap from the user.
-                    cancelBleReconnect()
-                    stopScan()
-                    gatt?.let { closeGatt(it, "Bluetooth turned off", reconnect = false) }
-                    if (currentBpm != 0) updateBpm(0)
-                    handler.post { uiCallbacks.forEach { it.onStatusUpdate("Enable Bluetooth") } }
-                    updateNotification("Bluetooth off — waiting to reconnect")
-                }
-                BluetoothAdapter.STATE_ON -> {
-                    scanner = bluetoothAdapter?.bluetoothLeScanner
-                    if (
-                        trackingRequested &&
-                        syncRole != SyncLinkManager.ROLE_MIRROR &&
-                        gatt == null &&
-                        !scanning
-                    ) {
-                        scheduleBleReconnect("Bluetooth restored", delayMs = 0L)
-                    }
-                }
-            }
-        }
-    }
-
-    private val bondStateReceiver = object : BroadcastReceiver() {
-        @SuppressLint("MissingPermission")
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
-
-            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                intent.getParcelableExtra(
-                    BluetoothDevice.EXTRA_DEVICE,
-                    BluetoothDevice::class.java
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-            } ?: return
-
-            val activeGatt = gatt ?: return
-            if (device.address != activeGatt.device.address) return
-
-            val newState = intent.getIntExtra(
-                BluetoothDevice.EXTRA_BOND_STATE,
-                BluetoothDevice.ERROR
-            )
-            val previousState = intent.getIntExtra(
-                BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE,
-                BluetoothDevice.ERROR
-            )
-
-            when (newState) {
-                BluetoothDevice.BOND_BONDING -> {
-                    if (waitingForBond) {
-                        handler.post {
-                            uiCallbacks.forEach { it.onStatusUpdate("Pairing Fitbit...") }
-                        }
-                    }
-                }
-                BluetoothDevice.BOND_BONDED -> {
-                    if (waitingForBond && gatt === activeGatt) {
-                        waitingForBond = false
-                        cancelBondTimeout()
-                        log("Fitbit pairing complete. Discovering services...")
-                        beginServiceDiscovery(activeGatt)
-                    }
-                }
-                BluetoothDevice.BOND_NONE -> {
-                    if (
-                        waitingForBond &&
-                        previousState == BluetoothDevice.BOND_BONDING &&
-                        gatt === activeGatt
-                    ) {
-                        waitingForBond = false
-                        cancelBondTimeout()
-                        handleSecurityFailure(activeGatt, "Fitbit pairing did not complete")
-                    }
-                }
-            }
-        }
-    }
-
     // ── Service lifecycle ────────────────────────────────────────────
 
     override fun onCreate() {
@@ -392,7 +259,6 @@ class HeartRateService : Service() {
 
         val manager = getSystemService(BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = manager.adapter
-        loadBleRecoveryState()
 
         if (bluetoothAdapter == null || !bluetoothAdapter!!.isEnabled) {
             log("Bluetooth is not available or not enabled!")
@@ -400,22 +266,12 @@ class HeartRateService : Service() {
         } else {
             scanner = bluetoothAdapter!!.bluetoothLeScanner
         }
-        registerReceiver(
-            bluetoothStateReceiver,
-            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
-        )
-        registerReceiver(
-            bondStateReceiver,
-            IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
-        )
-
         syncLink = SyncLinkManager(
             context = this,
             deviceName = Build.MODEL ?: "Phone",
             token = loadSyncToken(),
             onRoleChange = { role, peerName ->
                 // Already delivered on the main thread by SyncLinkManager.
-                val oldRole = syncRole
                 syncRole = role
                 // A stale lastSentBpm cache could make sendPresenceUpdate() wrongly
                 // believe Discord already shows the right value after regaining HOST
@@ -424,33 +280,20 @@ class HeartRateService : Service() {
                 lastSentBpm = -1
                 uiCallbacks.forEach { it.onSyncRoleChange(role, peerName) }
 
-                // If we become a MIRROR, cancel every pending local BLE path before
-                // dropping the active session. Otherwise an already-posted scan retry
-                // can race the role change and take the Fitbit back from the HOST.
                 if (role == SyncLinkManager.ROLE_MIRROR) {
-                    cancelBleReconnect()
-                    cancelGattOperationTimeout()
                     stopScan()
-                    gatt?.let {
-                        closeGatt(
-                            it,
-                            "Handing over BLE control to $peerName",
-                            reconnect = false
-                        )
+                    gatt?.let { activeGatt ->
+                        try { activeGatt.disconnect() } catch (_: Exception) {}
+                        try { activeGatt.close() } catch (_: Exception) {}
+                        if (gatt === activeGatt) gatt = null
+                        syncLink?.notifyFitbitState(false)
+                        updateBpm(0)
                     }
                 }
 
                 // Resume our own BLE scan if we stopped mirroring and are still meant to be tracking.
-                // We also auto-enable tracking if we were previously mirroring (implies user interest).
-                val wasMirror = (oldRole == SyncLinkManager.ROLE_MIRROR)
-                if (role != SyncLinkManager.ROLE_MIRROR && (trackingRequested || wasMirror) && gatt == null && !scanning) {
-                    if (wasMirror) {
-                        log("Mirror lost; picking up session as Host.")
-                        trackingRequested = true
-                        persistTrackingRequested(true)
-                        ensureTrackingInfrastructure()
-                    }
-                    scheduleBleReconnect("Mirror link ended", delayMs = 0L)
+                if (role != SyncLinkManager.ROLE_MIRROR && trackingRequested && gatt == null && !scanning) {
+                    startScan()
                 }
             },
             onStatus = { text -> handler.post { uiCallbacks.forEach { it.onSyncStatusUpdate(text) } } },
@@ -461,15 +304,6 @@ class HeartRateService : Service() {
         ).also { it.start() }
 
         handler.post(phaseRunnable)
-
-        if (trackingRequested) {
-            ensureTrackingInfrastructure()
-            if (guidedRepairRequired) {
-                showGuidedRepairStatus()
-            } else if (bluetoothAdapter?.isEnabled == true) {
-                scheduleBleReconnect("Resuming heart rate tracking", delayMs = 0L)
-            }
-        }
     }
 
     fun requestSyncLink() = syncLink?.requestLink()
@@ -499,82 +333,18 @@ class HeartRateService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun loadBleRecoveryState() {
-        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        trackingRequested = prefs.getBoolean(PREF_TRACKING_REQUESTED, false)
-        guidedRepairRequired = prefs.getBoolean(PREF_FITBIT_REPAIR_REQUIRED, false)
-        lastFitbitAddress = prefs.getString(PREF_LAST_FITBIT_ADDRESS, null)
-        lastFitbitName = prefs.getString(PREF_LAST_FITBIT_NAME, null)
-
-        // Once bonded, Android retains the Fitbit's identity keys. Prefer the
-        // framework's bonded-device identity over an old private scan address.
-        val bondedFitbit = try {
-            val bondedDevices = bluetoothAdapter?.bondedDevices.orEmpty()
-            bondedDevices.firstOrNull { it.address == lastFitbitAddress }
-                ?: bondedDevices.firstOrNull { device ->
-                    val name = try { device.name } catch (_: SecurityException) { null }
-                    !lastFitbitName.isNullOrBlank() && name == lastFitbitName
-                }
-        } catch (_: SecurityException) {
-            null
-        }
-
-        bondedFitbit?.let { device ->
-            lastFitbitAddress = device.address
-            val name = try { device.name } catch (_: SecurityException) { null }
-            if (!name.isNullOrBlank()) lastFitbitName = name
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun rememberStreamingFitbit(device: BluetoothDevice) {
-        lastFitbitAddress = device.address
-        val name = try { device.name } catch (_: SecurityException) { null }
-        if (!name.isNullOrBlank()) lastFitbitName = name
-
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            .putString(PREF_LAST_FITBIT_ADDRESS, lastFitbitAddress)
-            .putString(PREF_LAST_FITBIT_NAME, lastFitbitName)
-            .putBoolean(PREF_FITBIT_REPAIR_REQUIRED, false)
-            .apply()
-    }
-
-    private fun persistTrackingRequested(requested: Boolean) {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            .putBoolean(PREF_TRACKING_REQUESTED, requested)
-            .apply()
-    }
-
-    private fun persistGuidedRepairRequired(required: Boolean) {
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            .putBoolean(PREF_FITBIT_REPAIR_REQUIRED, required)
-            .apply()
-    }
-
-    private fun showGuidedRepairStatus() {
-        handler.post {
-            uiCallbacks.forEach {
-                it.onStatusUpdate("Reconnect Fitbit in Bluetooth settings")
-            }
-            updateNotification("Fitbit needs reconnecting")
-        }
-    }
-
-    @SuppressLint("MissingPermission")
     override fun onDestroy() {
         log("Service being destroyed. Cleaning up...")
         try { unregisterReceiver(screenStateReceiver) } catch (_: Exception) {}
-        try { unregisterReceiver(bluetoothStateReceiver) } catch (_: Exception) {}
-        try { unregisterReceiver(bondStateReceiver) } catch (_: Exception) {}
-        cancelBleReconnect()
-        cancelGattOperationTimeout()
-        cancelBondTimeout()
-        cancelFirstPacketTimeout()
         stopScan()
         disconnectDiscord()
         floatingManager?.hide()
         floatingManager = null
-        gatt?.let { closeGatt(it, "Service destroyed", reconnect = false) }
+        gatt?.let { activeGatt ->
+            try { activeGatt.disconnect() } catch (_: Exception) {}
+            try { activeGatt.close() } catch (_: Exception) {}
+        }
+        gatt = null
         syncLink?.notifyFitbitState(false)
         syncLink?.stop()
         syncLink = null
@@ -596,8 +366,6 @@ class HeartRateService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         when {
-            trackingRequested ->
-                log("App swiped away. Heart rate tracking remains active.")
             isHeartbeatSoundEnabled ->
                 log("App swiped away. Heartbeat sound remains active.")
             syncRole == SyncLinkManager.ROLE_MIRROR ->
@@ -638,19 +406,14 @@ class HeartRateService : Service() {
     }
 
     fun startTracking() {
-        trackingRequested = true
-        guidedRepairRequired = false
-        consecutiveSecurityFailures = 0
-        persistTrackingRequested(true)
-        persistGuidedRepairRequired(false)
-        ensureTrackingInfrastructure()
-
         if (bluetoothAdapter == null || !bluetoothAdapter!!.isEnabled) {
             log("Cannot start: Bluetooth is not enabled")
             handler.post { uiCallbacks.forEach { it.onStatusUpdate("Enable Bluetooth") } }
             return
         }
 
+        trackingRequested = true
+        ensureTrackingInfrastructure()
         startScan()
     }
 
@@ -659,16 +422,13 @@ class HeartRateService : Service() {
         log("Stopping all processes...")
         toggleHeartbeatSound(false)
         trackingRequested = false
-        guidedRepairRequired = false
-        consecutiveSecurityFailures = 0
-        persistTrackingRequested(false)
-        persistGuidedRepairRequired(false)
-        cancelBleReconnect()
-        cancelGattOperationTimeout()
-        cancelBondTimeout()
-        cancelFirstPacketTimeout()
         stopScan()
-        gatt?.let { closeGatt(it, "Tracking stopped", reconnect = false) }
+        gatt?.let { activeGatt ->
+            try { activeGatt.disconnect() } catch (_: Exception) {}
+            try { activeGatt.close() } catch (_: Exception) {}
+        }
+        gatt = null
+        syncLink?.notifyFitbitState(false)
 
         if (wakeLock?.isHeld == true) {
             wakeLock?.release()
@@ -1171,208 +931,20 @@ class HeartRateService : Service() {
     //  BLE SCANNING
     // ══════════════════════════════════════════════════════════════════
 
-    private fun cancelBleReconnect() {
-        bleReconnectRunnable?.let { handler.removeCallbacks(it) }
-        bleReconnectRunnable = null
-    }
-
-    private fun cancelGattOperationTimeout() {
-        gattOperationTimeoutRunnable?.let { handler.removeCallbacks(it) }
-        gattOperationTimeoutRunnable = null
-    }
-
-    private fun cancelBondTimeout() {
-        bondTimeoutRunnable?.let { handler.removeCallbacks(it) }
-        bondTimeoutRunnable = null
-    }
-
-    private fun cancelFirstPacketTimeout() {
-        firstPacketTimeoutRunnable?.let { handler.removeCallbacks(it) }
-        firstPacketTimeoutRunnable = null
-    }
-
-    private fun scheduleBleReconnect(
-        reason: String,
-        delayMs: Long = BLE_RECONNECT_DELAY_MS
-    ) {
-        cancelBleReconnect()
-        if (
-            !trackingRequested ||
-            syncRole == SyncLinkManager.ROLE_MIRROR ||
-            guidedRepairRequired
-        ) return
-
-        val retry = Runnable {
-            bleReconnectRunnable = null
-            if (
-                trackingRequested &&
-                syncRole != SyncLinkManager.ROLE_MIRROR &&
-                gatt == null &&
-                !scanning &&
-                !guidedRepairRequired
-            ) {
-                startScan()
-            }
-        }
-        bleReconnectRunnable = retry
-
-        val delayText = if (delayMs == 0L) "now" else "in ${delayMs / 1000}s"
-        log("$reason. Retrying $delayText...")
-        handler.post {
-            uiCallbacks.forEach { it.onStatusUpdate("Reconnecting...") }
-            updateNotification("Fitbit lost — reconnecting")
-        }
-        handler.postDelayed(retry, delayMs)
-    }
-
-    private fun armGattOperationTimeout(
-        expectedGatt: BluetoothGatt,
-        operation: String
-    ) {
-        cancelGattOperationTimeout()
-        val timeout = Runnable {
-            gattOperationTimeoutRunnable = null
-            if (
-                gatt === expectedGatt &&
-                trackingRequested &&
-                syncRole != SyncLinkManager.ROLE_MIRROR
-            ) {
-                // A timeout can be caused by ordinary radio loss. Only an
-                // explicit security status or the separate first-BPM watchdog
-                // may advance the guided pairing-repair breaker.
-                recoverGatt(expectedGatt, "$operation timed out")
-            }
-        }
-        gattOperationTimeoutRunnable = timeout
-        handler.postDelayed(timeout, BLE_OPERATION_TIMEOUT_MS)
-    }
-
-    private fun armBondTimeout(expectedGatt: BluetoothGatt) {
-        cancelBondTimeout()
-        val timeout = Runnable {
-            bondTimeoutRunnable = null
-            if (
-                gatt === expectedGatt &&
-                waitingForBond &&
-                trackingRequested &&
-                syncRole != SyncLinkManager.ROLE_MIRROR
-            ) {
-                waitingForBond = false
-                handleSecurityFailure(expectedGatt, "Fitbit pairing timed out")
-            }
-        }
-        bondTimeoutRunnable = timeout
-        handler.postDelayed(timeout, BLE_BOND_TIMEOUT_MS)
-    }
-
-    private fun armFirstPacketTimeout(expectedGatt: BluetoothGatt) {
-        cancelFirstPacketTimeout()
-        awaitingFirstBpm = true
-        val timeout = Runnable {
-            firstPacketTimeoutRunnable = null
-            if (
-                gatt === expectedGatt &&
-                awaitingFirstBpm &&
-                hrNotificationsReady &&
-                trackingRequested &&
-                syncRole != SyncLinkManager.ROLE_MIRROR
-            ) {
-                awaitingFirstBpm = false
-                handleSecurityFailure(
-                    expectedGatt,
-                    "Fitbit connected but sent no heart rate"
-                )
-            }
-        }
-        firstPacketTimeoutRunnable = timeout
-        handler.postDelayed(timeout, BLE_FIRST_PACKET_TIMEOUT_MS)
-    }
-
-    private fun handleSecurityFailure(expectedGatt: BluetoothGatt, reason: String) {
-        if (gatt !== expectedGatt) return
-
-        consecutiveSecurityFailures += 1
-        log(
-            "$reason " +
-                "($consecutiveSecurityFailures/${FitbitBlePolicy.FAILURES_BEFORE_GUIDED_REPAIR})"
-        )
-
-        if (FitbitBlePolicy.needsGuidedRepair(consecutiveSecurityFailures)) {
-            enterGuidedRepair(expectedGatt, reason)
-        } else {
-            closeGatt(expectedGatt, reason, reconnect = true)
-        }
-    }
-
-    private fun enterGuidedRepair(expectedGatt: BluetoothGatt, reason: String) {
-        guidedRepairRequired = true
-        persistGuidedRepairRequired(true)
-        cancelBleReconnect()
-        stopScan()
-        log(
-            "$reason occurred twice. Automatic retries are paused; " +
-                "reconnect the Fitbit in Android Bluetooth settings, then tap Start."
-        )
-        closeGatt(expectedGatt, reason, reconnect = false)
-        showGuidedRepairStatus()
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun closeGatt(expectedGatt: BluetoothGatt, reason: String, reconnect: Boolean) {
-        if (gatt !== expectedGatt) {
-            // A callback from an older attempt must never clear a newer session.
-            try { expectedGatt.close() } catch (_: Exception) {}
-            return
-        }
-
-        cancelGattOperationTimeout()
-        cancelBondTimeout()
-        cancelFirstPacketTimeout()
-        gatt = null
-        hrNotificationsReady = false
-        waitingForBond = false
-        awaitingFirstBpm = false
-        lastLocalHrTimestamp = 0L
-        try { expectedGatt.disconnect() } catch (_: Exception) {}
-        try { expectedGatt.close() } catch (_: Exception) {}
-        syncLink?.notifyFitbitState(false)
-        updateBpm(0)
-
-        if (reconnect) scheduleBleReconnect(reason)
-    }
-
-    private fun recoverGatt(expectedGatt: BluetoothGatt, reason: String) {
-        log(reason)
-        closeGatt(expectedGatt, reason, reconnect = true)
-    }
-
     @SuppressLint("MissingPermission")
     private fun startScan() {
-        Log.d(TAG, "startScan() called. scanning=$scanning gatt=$gatt isEnabled=${bluetoothAdapter?.isEnabled}")
         if (!trackingRequested || scanning || gatt != null) return
-        if (guidedRepairRequired) {
-            showGuidedRepairStatus()
-            return
-        }
         if (syncRole == SyncLinkManager.ROLE_MIRROR) {
             log("Mirroring another device's Fitbit connection; not scanning.")
             return
         }
 
-        val adapter = bluetoothAdapter
-        if (adapter?.isEnabled != true) {
-            log("Bluetooth is off; waiting for it to be enabled.")
+        if (bluetoothAdapter?.isEnabled != true) {
+            log("Bluetooth is not enabled.")
             handler.post { uiCallbacks.forEach { it.onStatusUpdate("Enable Bluetooth") } }
             return
         }
 
-        val activeScanner = adapter.bluetoothLeScanner
-        if (activeScanner == null) {
-            scheduleBleReconnect("BLE scanner unavailable")
-            return
-        }
-
-        cancelBleReconnect()
         scanning = true
         handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scanning...") } }
         log("Scanning for Charge/Fitbit...")
@@ -1381,40 +953,13 @@ class HeartRateService : Service() {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        // Android suspends unfiltered scans while the display is off. The first
-        // user-initiated scan may be unfiltered so we can learn the Fitbit; every
-        // recovery scan has non-empty OR filters for its address/name/HR service.
-        val filters: List<ScanFilter>? = if (
-            lastFitbitAddress != null || lastFitbitName != null
-        ) {
-            val recoveryFilters = mutableListOf<ScanFilter>()
-            recoveryFilters.add(
-                ScanFilter.Builder()
-                    .setServiceUuid(android.os.ParcelUuid(HR_SERVICE_UUID))
-                    .build()
-            )
-            lastFitbitAddress?.let { address ->
-                try {
-                    recoveryFilters.add(
-                        ScanFilter.Builder().setDeviceAddress(address).build()
-                    )
-                } catch (_: IllegalArgumentException) {}
-            }
-            lastFitbitName?.let { name ->
-                recoveryFilters.add(ScanFilter.Builder().setDeviceName(name).build())
-            }
-            recoveryFilters
-        } else {
-            null
-        }
-
-        scanner = activeScanner
+        scanner = bluetoothAdapter?.bluetoothLeScanner
         try {
-            activeScanner.startScan(filters, settings, scanCallback)
+            scanner?.startScan(null, settings, scanCallback)
         } catch (e: Exception) {
             scanning = false
             log("Could not start BLE scan: ${e.message}")
-            scheduleBleReconnect("BLE scan could not start")
+            handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan failed") } }
             return
         }
 
@@ -1440,7 +985,11 @@ class HeartRateService : Service() {
                 log("Scan timeout (2m). Waiting 30s before persistent retry...")
                 handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan Idle...") } }
                 updateNotification("Scan Idle — Waiting to retry")
-                scheduleBleReconnect("Scan timed out", BLE_SCAN_RETRY_DELAY_MS)
+                handler.postDelayed({
+                    if (trackingRequested && !scanning && gatt == null && syncRole != SyncLinkManager.ROLE_MIRROR) {
+                        startScan()
+                    }
+                }, 30_000)
             } else {
                 log("Scan timeout (2m). Stopping.")
                 handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan Timeout") } }
@@ -1452,47 +1001,24 @@ class HeartRateService : Service() {
     private val scanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            handler.post {
-                // stopScan() can leave already-queued results behind. These guards
-                // prevent a duplicate result from opening and overwriting a second GATT.
-                if (
-                    !scanning ||
-                    gatt != null ||
-                    !trackingRequested ||
-                    guidedRepairRequired
-                ) return@post
-
-                val device = result.device
-                val name = try { device.name } catch (_: SecurityException) { null }
-                val uuids = result.scanRecord?.serviceUuids
-
-                if (VERBOSE_SCAN_LOG) Log.d(TAG, "ScanResult: addr=${device.address} name=$name")
-
-                val hasHrService = uuids?.contains(
-                    android.os.ParcelUuid(HR_SERVICE_UUID)
-                ) ?: false
-                val isFitbit = name?.let {
-                    it.contains("Charge", ignoreCase = true) ||
-                        it.contains("Fitbit", ignoreCase = true)
-                } ?: false
-                val isRememberedFitbit = device.address == lastFitbitAddress
-
-                if (isFitbit || hasHrService || isRememberedFitbit) {
-                    log("Match Found! name=${name ?: "Unknown"} addr=${device.address} hasHr=$hasHrService")
-                    stopScan()
-                    connectToDevice(device)
-                }
+            if (!scanning || gatt != null || !trackingRequested) return
+            val name = result.device.name ?: return
+            if ("Charge" in name || "Fitbit" in name) {
+                log("Found: $name (${result.device.address})")
+                stopScan()
+                connectToDevice(result.device)
             }
         }
 
         override fun onScanFailed(errorCode: Int) {
-            handler.post {
-                // Ignore a failure callback belonging to a scan we already stopped.
-                if (!scanning) return@post
-                scanning = false
-                handler.removeCallbacks(scanTimeoutRunnable)
-                scheduleBleReconnect("Scan failed (error $errorCode)", delayMs = 3_000L)
-            }
+            log("Scan failed (error $errorCode). Retrying in 3s...")
+            scanning = false
+            handler.removeCallbacks(scanTimeoutRunnable)
+            handler.postDelayed({
+                if (trackingRequested && gatt == null && !scanning && syncRole != SyncLinkManager.ROLE_MIRROR) {
+                    startScan()
+                }
+            }, 3_000)
         }
     }
 
@@ -1501,128 +1027,23 @@ class HeartRateService : Service() {
     // ══════════════════════════════════════════════════════════════════
 
     @SuppressLint("MissingPermission")
-    private fun fitbitBondState(device: BluetoothDevice): FitbitBlePolicy.BondState =
-        when (device.bondState) {
-            BluetoothDevice.BOND_BONDED -> FitbitBlePolicy.BondState.BONDED
-            BluetoothDevice.BOND_BONDING -> FitbitBlePolicy.BondState.BONDING
-            else -> FitbitBlePolicy.BondState.NONE
-        }
-
-    @SuppressLint("MissingPermission")
-    private fun ensureBondThenDiscover(expectedGatt: BluetoothGatt) {
-        if (gatt !== expectedGatt) return
-
-        when (FitbitBlePolicy.bondAction(fitbitBondState(expectedGatt.device))) {
-            FitbitBlePolicy.BondAction.DISCOVER_SERVICES -> {
-                waitingForBond = false
-                cancelBondTimeout()
-                beginServiceDiscovery(expectedGatt)
-            }
-            FitbitBlePolicy.BondAction.WAIT_FOR_BOND -> {
-                waitingForBond = true
-                log("Fitbit pairing is already in progress...")
-                handler.post {
-                    uiCallbacks.forEach { it.onStatusUpdate("Pairing Fitbit...") }
-                }
-                updateNotification("Pairing Fitbit")
-                armBondTimeout(expectedGatt)
-            }
-            FitbitBlePolicy.BondAction.START_BONDING -> {
-                waitingForBond = true
-                log("Securing the Fitbit connection...")
-                handler.post {
-                    uiCallbacks.forEach { it.onStatusUpdate("Pairing Fitbit...") }
-                }
-                updateNotification("Pairing Fitbit")
-
-                val started = try {
-                    expectedGatt.device.createBond()
-                } catch (e: Exception) {
-                    log("Could not start Fitbit pairing: ${e.message}")
-                    false
-                }
-
-                if (started) {
-                    armBondTimeout(expectedGatt)
-                } else {
-                    // Bonding can start or complete between the state check and
-                    // createBond(), so inspect the state again before treating a
-                    // false return as an actual failure.
-                    when (expectedGatt.device.bondState) {
-                        BluetoothDevice.BOND_BONDED -> {
-                            waitingForBond = false
-                            beginServiceDiscovery(expectedGatt)
-                        }
-                        BluetoothDevice.BOND_BONDING -> armBondTimeout(expectedGatt)
-                        else -> {
-                            waitingForBond = false
-                            handleSecurityFailure(
-                                expectedGatt,
-                                "Could not start Fitbit pairing"
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun beginServiceDiscovery(expectedGatt: BluetoothGatt) {
-        if (gatt !== expectedGatt) return
-        if (!trackingRequested || syncRole == SyncLinkManager.ROLE_MIRROR) {
-            closeGatt(expectedGatt, "Connection no longer needed", reconnect = false)
-            return
-        }
-
-        log("Connected securely. Discovering services...")
-        handler.post { uiCallbacks.forEach { it.onStatusUpdate("Connecting...") } }
-        cancelGattOperationTimeout()
-        if (expectedGatt.discoverServices()) {
-            armGattOperationTimeout(expectedGatt, "Service discovery")
-        } else {
-            recoverGatt(expectedGatt, "Could not start service discovery")
-        }
-    }
-
-    @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
-        if (
-            !trackingRequested ||
-            syncRole == SyncLinkManager.ROLE_MIRROR ||
-            gatt != null
-        ) return
-
-        cancelBleReconnect()
+        if (!trackingRequested || syncRole == SyncLinkManager.ROLE_MIRROR || gatt != null) return
         handler.post { uiCallbacks.forEach { it.onStatusUpdate("Connecting...") } }
         val name = try { device.name } catch (_: SecurityException) { null }
         log("Connecting to ${name ?: "Fitbit"} (${device.address})...")
 
-        // A direct connection is intentionally used after a positive scan result.
-        // Supplying our Handler serializes all GATT callbacks with retry state.
-        val newGatt = try {
+        gatt = try {
             device.connectGatt(
                 this,
                 false,
                 gattCallback,
-                BluetoothDevice.TRANSPORT_LE,
-                BluetoothDevice.PHY_LE_1M_MASK,
-                handler
+                BluetoothDevice.TRANSPORT_LE
             )
         } catch (e: Exception) {
             log("Could not create GATT connection: ${e.message}")
             null
         }
-
-        if (newGatt == null) {
-            scheduleBleReconnect("Could not create GATT connection")
-            return
-        }
-
-        gatt = newGatt
-        hrNotificationsReady = false
-        lastLocalHrTimestamp = 0L
-        armGattOperationTimeout(newGatt, "Fitbit connection")
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -1634,26 +1055,33 @@ class HeartRateService : Service() {
                 return
             }
 
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                // Connection-state status 0x08 is also Android's legacy
-                // out-of-range connection timeout, so it is not safe to treat
-                // attribute-security numeric codes as security failures here.
-                // Security classification is limited to GATT operation callbacks.
-                recoverGatt(g, "GATT connection failed (status $status)")
-                return
-            }
-
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     if (!trackingRequested || syncRole == SyncLinkManager.ROLE_MIRROR) {
-                        closeGatt(g, "Connection no longer needed", reconnect = false)
+                        try { g.disconnect() } catch (_: Exception) {}
+                        try { g.close() } catch (_: Exception) {}
+                        if (gatt === g) gatt = null
                         return
                     }
-                    cancelGattOperationTimeout()
-                    ensureBondThenDiscover(g)
+                    log("Connected! Discovering services...")
+                    handler.post { uiCallbacks.forEach { it.onStatusUpdate("Discovering...") } }
+                    g.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    recoverGatt(g, "Fitbit disconnected")
+                    log("Disconnected (status $status).")
+                    updateBpm(0)
+                    try { g.close() } catch (_: Exception) {}
+                    if (gatt === g) gatt = null
+                    syncLink?.notifyFitbitState(false)
+
+                    if (trackingRequested && syncRole != SyncLinkManager.ROLE_MIRROR) {
+                        log("Persistent mode active. Restarting scan in 5s...")
+                        handler.postDelayed({
+                            if (trackingRequested && gatt == null && !scanning && syncRole != SyncLinkManager.ROLE_MIRROR) {
+                                startScan()
+                            }
+                        }, 5_000)
+                    }
                 }
             }
         }
@@ -1665,83 +1093,49 @@ class HeartRateService : Service() {
                 return
             }
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                if (FitbitBlePolicy.isSecurityGattFailure(status)) {
-                    handleSecurityFailure(g, "Fitbit security check failed")
-                } else {
-                    recoverGatt(g, "Service discovery failed (status $status)")
-                }
+                log("Service discovery failed (status $status)")
                 return
             }
 
             val hrService = g.getService(HR_SERVICE_UUID)
             if (hrService == null) {
-                recoverGatt(g, "Heart Rate service not found on device")
+                log("Heart Rate service not found on device!")
                 return
             }
 
             val hrChar = hrService.getCharacteristic(HR_MEASUREMENT_UUID)
             if (hrChar == null) {
-                recoverGatt(g, "HR Measurement characteristic not found")
+                log("HR Measurement characteristic not found!")
                 return
             }
 
             // Enable notifications locally
             if (!g.setCharacteristicNotification(hrChar, true)) {
-                recoverGatt(g, "Could not enable local HR notifications")
+                log("Could not enable local HR notifications")
                 return
             }
 
             // Write to the CCC descriptor to enable notifications on the remote device
             val descriptor = hrChar.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG)
             if (descriptor == null) {
-                recoverGatt(g, "HR notification descriptor not found")
+                log("CCC descriptor not found — notifications may not work")
                 return
             }
 
             @Suppress("DEPRECATION")
             descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            armGattOperationTimeout(g, "HR notification setup")
             @Suppress("DEPRECATION")
             val writeStarted = g.writeDescriptor(descriptor)
-            if (!writeStarted) {
-                recoverGatt(g, "Could not start HR notification setup")
-            }
-        }
-
-        @SuppressLint("MissingPermission")
-        override fun onDescriptorWrite(
-            g: BluetoothGatt,
-            descriptor: BluetoothGattDescriptor,
-            status: Int
-        ) {
-            if (descriptor.uuid != CLIENT_CHARACTERISTIC_CONFIG) return
-            if (gatt !== g) {
-                try { g.close() } catch (_: Exception) {}
-                return
-            }
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                if (FitbitBlePolicy.isSecurityGattFailure(status)) {
-                    handleSecurityFailure(g, "Fitbit authorization failed")
-                } else {
-                    recoverGatt(g, "HR notification setup failed (status $status)")
-                }
-                return
-            }
-
-            cancelGattOperationTimeout()
-            hrNotificationsReady = true
-            lastLocalHrTimestamp = 0L
-            armFirstPacketTimeout(g)
-            if (firstAttempt) {
+            if (writeStarted) {
                 log("HR stream requested! Accept 'Share' on your watch.")
                 handler.post {
                     uiCallbacks.forEach { it.onStatusUpdate("Press Share on Fitbit") }
                 }
+                updateNotification("Connected — waiting for heart rate")
+                syncLink?.notifyFitbitState(true)
             } else {
-                log("Fitbit connected; waiting for heart rate...")
-                handler.post { uiCallbacks.forEach { it.onStatusUpdate("Waiting for HR...") } }
+                log("Could not start HR notification setup")
             }
-            updateNotification("Connected — waiting for heart rate")
         }
 
         override fun onCharacteristicChanged(
@@ -1760,23 +1154,7 @@ class HeartRateService : Service() {
                 (data[1].toInt() and 0xFF) or ((data[2].toInt() and 0xFF) shl 8)
             }
 
-            val now = System.currentTimeMillis()
-            val firstPacketForSession = awaitingFirstBpm
-            if (firstPacketForSession) {
-                awaitingFirstBpm = false
-                cancelFirstPacketTimeout()
-                consecutiveSecurityFailures = 0
-                guidedRepairRequired = false
-                persistGuidedRepairRequired(false)
-                rememberStreamingFitbit(g.device)
-                syncLink?.notifyFitbitState(true)
-                log("HR stream active!")
-                handler.post { uiCallbacks.forEach { it.onStatusUpdate("Connected") } }
-                updateNotification("Connected — streaming HR")
-            }
-            firstAttempt = false
-            lastLocalHrTimestamp = now
-            lastBpmTimestamp = now
+            lastBpmTimestamp = System.currentTimeMillis()
             updateBpm(bpm)
         }
     }
