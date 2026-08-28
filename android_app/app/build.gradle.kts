@@ -6,7 +6,7 @@ plugins {
 }
 
 // Keep the bot credential out of source control. Local Android builds can put
-// DISCORD_TOKEN in hr_bot_android/local.properties; CI can provide the same
+// DISCORD_TOKEN in android_app/local.properties; CI can provide the same
 // value as an environment variable.
 val localProperties = Properties().apply {
     val localPropertiesFile = rootProject.file("local.properties")

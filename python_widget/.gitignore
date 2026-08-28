@@ -1,0 +1,13 @@
+.env
+__pycache__/
+launch hr_widget.bat - shortcut.lnk
+launch_hr.bat
+/archive
+/archive - code
+launch_hr.bat - Shortcut.lnk
+sync_token.txt
+guild_settings.json
+clevo_broker/build/
+clevo_broker/certificates/
+clevo_broker/bin/
+clevo_broker/obj/

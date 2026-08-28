@@ -1,0 +1,7 @@
+{"captured_at_ns":1787880809725156900,"message":{"type":"send","payload":{"event":"READY","module":"C:\\Program Files\\WindowsApps\\CLEVOCO.LedKeyboardSetting_1.14.0.0_x64__6h6z29zh29qx0\\CC\\InsydeDCHU.dll","hooks":{"SetDCHU_Data":"0x7ff8bf252920","WriteAppSettings":"0x7ff8bf252ea0"}}}}
+{"captured_at_ns":1787880839749051300,"message":{"type":"send","payload":{"event":"WriteAppSettings","call_id":1,"thread_id":27960,"page":2,"offset":80,"length":1,"payload":[1],"result":1}}}
+{"captured_at_ns":1787880839760318300,"message":{"type":"send","payload":{"event":"WriteAppSettings","call_id":2,"thread_id":27960,"page":2,"offset":80,"length":1,"payload":[1],"result":1}}}
+{"captured_at_ns":1787880839771505800,"message":{"type":"send","payload":{"event":"WriteAppSettings","call_id":3,"thread_id":27960,"page":2,"offset":80,"length":1,"payload":[1],"result":1}}}
+{"captured_at_ns":1787880839782834400,"message":{"type":"send","payload":{"event":"WriteAppSettings","call_id":4,"thread_id":27960,"page":2,"offset":35,"length":1,"payload":[2],"result":1}}}
+{"captured_at_ns":1787880839799062400,"message":{"type":"send","payload":{"event":"SetDCHU_Data","call_id":5,"thread_id":27960,"command":103,"length":4,"payload":[95,0,0,244],"result":103}}}
+{"captured_at_ns":1787880839803746800,"message":{"type":"send","payload":{"event":"SetDCHU_Data","call_id":6,"thread_id":27960,"command":103,"length":4,"payload":[1,176,7,224],"result":103}}}
