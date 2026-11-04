@@ -18,13 +18,16 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 class ServerListActivity : AppCompatActivity() {
 
     private lateinit var recyclerView: RecyclerView
+    private lateinit var emptyText: TextView
     private var service: HeartRateService? = null
     private var bound = false
 
     private val uiCallback = object : HeartRateService.UICallback {
         override fun onBpmUpdate(bpm: Int) {}
         override fun onStatusUpdate(status: String) {}
-        override fun onDiscordStatusUpdate(status: String) {}
+        override fun onDiscordStatusUpdate(status: String) {
+            runOnUiThread { updateList() }
+        }
         override fun onLog(message: String) {}
         override fun onGuildsUpdated(guilds: List<HeartRateService.GuildInfo>) {
             runOnUiThread { updateList() }
@@ -50,12 +53,20 @@ class ServerListActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_server_list)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        title = "Discord servers"
 
         recyclerView = findViewById(R.id.serverRecyclerView)
+        emptyText = findViewById(R.id.serverListEmpty)
         recyclerView.layoutManager = LinearLayoutManager(this)
 
         val intent = Intent(this, HeartRateService::class.java)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
+    }
+
+    override fun onSupportNavigateUp(): Boolean {
+        finish()
+        return true
     }
 
     override fun onDestroy() {
@@ -68,10 +79,26 @@ class ServerListActivity : AppCompatActivity() {
     }
 
     private fun updateList() {
-        service?.let {
-            recyclerView.adapter = ServerAdapter(it.getGuilds()) { id, enabled ->
-                it.toggleGuild(id, enabled)
+        val svc = service ?: return
+        val guilds = svc.getGuilds().sortedBy { it.name.lowercase() }
+        val discordOn = svc.isDiscordEnabled
+
+        if (guilds.isEmpty()) {
+            emptyText.visibility = View.VISIBLE
+            emptyText.text = if (discordOn) {
+                "Connected, but no servers have loaded yet. Wait a moment or check that the bot was invited."
+            } else {
+                "No servers yet. Turn on Discord Bot on the main screen and wait for servers to load."
             }
+            recyclerView.adapter = ServerAdapter(emptyList()) { _, _ -> }
+            return
+        }
+
+        emptyText.visibility = View.GONE
+        recyclerView.adapter = ServerAdapter(guilds) { id, enabled ->
+            svc.toggleGuild(id, enabled)
+            // Refresh hints for the row that changed without waiting for a service event.
+            updateList()
         }
     }
 
@@ -82,6 +109,7 @@ class ServerListActivity : AppCompatActivity() {
 
         class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val nameText: TextView = view.findViewById(R.id.guildName)
+            val hintText: TextView = view.findViewById(R.id.guildHint)
             val switch: SwitchMaterial = view.findViewById(R.id.guildSwitch)
         }
 
@@ -94,6 +122,12 @@ class ServerListActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val guild = guilds[position]
             holder.nameText.text = guild.name
+            holder.hintText.text = if (guild.isEnabled) {
+                "Nickname shows live BPM"
+            } else {
+                "Nickname stays BPMsworth"
+            }
+            holder.switch.setOnCheckedChangeListener(null)
             holder.switch.isChecked = guild.isEnabled
             holder.switch.setOnCheckedChangeListener { _, isChecked ->
                 onToggle(guild.id, isChecked)

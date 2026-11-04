@@ -4,209 +4,300 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:gravity="center_horizontal"
     android:background="#111111"
-    android:padding="24dp">
+    android:padding="20dp">
 
-    <!-- Status text (Scanning... / Connecting... / etc.) -->
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Ready"
-        android:textColor="#888888"
-        android:textSize="16sp"
-        android:fontFamily="sans-serif-medium"
-        android:layout_marginTop="16dp"
-        android:layout_marginBottom="16dp" />
-
-    <!-- Main BPM display -->
-    <TextView
-        android:id="@+id/bpmText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="-- BPM"
-        android:textColor="#FFFFFF"
-        android:textSize="64sp"
-        android:fontFamily="sans-serif-black"
-        android:textStyle="bold" />
-
-    <Button
-        android:id="@+id/btnStartHr"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Start Scan"
-        android:layout_marginTop="24dp"
-        android:backgroundTint="#444444"
-        android:textColor="#FFFFFF"
-        style="@style/Widget.MaterialComponents.Button" />
-
-    <Button
-        android:id="@+id/btnStopHr"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Stop"
-        android:layout_marginTop="8dp"
-        android:backgroundTint="#444444"
-        android:textColor="#FFFFFF"
-        style="@style/Widget.MaterialComponents.Button" />
-
-    <com.google.android.material.switchmaterial.SwitchMaterial
-        android:id="@+id/switchDiscord"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Discord Bot"
-        android:textColor="#FFFFFF"
-        android:layout_marginTop="16dp" />
-
-    <com.google.android.material.switchmaterial.SwitchMaterial
-        android:id="@+id/switchPulse"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Pulse Animation"
-        android:textColor="#FFFFFF"
-        android:layout_marginTop="8dp" />
-
-    <com.google.android.material.switchmaterial.SwitchMaterial
-        android:id="@+id/switchHeartbeatSound"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Heartbeat Sound"
-        android:textColor="#FFFFFF"
-        android:layout_marginTop="8dp" />
-
-    <TextView
-        android:id="@+id/heartbeatSoundVolumeLabel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Heartbeat Volume: 100%"
-        android:textColor="#BBBBBB"
-        android:textSize="14sp"
-        android:layout_marginTop="4dp" />
-
-    <SeekBar
-        android:id="@+id/heartbeatSoundVolumeSeekBar"
-        android:layout_width="240dp"
-        android:layout_height="wrap_content"
-        android:max="100"
-        android:progress="100"
-        android:contentDescription="Heartbeat sound volume" />
-
-    <Spinner
-        android:id="@+id/heartbeatSoundEffectSpinner"
-        android:layout_width="240dp"
-        android:layout_height="wrap_content"
-        android:contentDescription="Heartbeat sound effect"
-        android:popupBackground="#333333" />
-
-    <com.google.android.material.switchmaterial.SwitchMaterial
-        android:id="@+id/switchFloating"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Floating Widget"
-        android:textColor="#FFFFFF"
-        android:layout_marginTop="8dp" />
-
-    <com.google.android.material.switchmaterial.SwitchMaterial
-        android:id="@+id/switchShowBpm"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Show BPM Number"
-        android:textColor="#FFFFFF"
-        android:layout_marginTop="8dp" />
-
-    <com.google.android.material.switchmaterial.SwitchMaterial
-        android:id="@+id/switchNewThresholds"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Sitting Thresholds"
-        android:textColor="#FFFFFF"
-        android:layout_marginTop="8dp" />
-
-    <Button
-        android:id="@+id/btnPulseScreen"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Pulse Screen"
-        android:layout_marginTop="16dp"
-        android:backgroundTint="#444444"
-        android:textColor="#FFFFFF"
-        style="@style/Widget.MaterialComponents.Button" />
-
-    <!-- Link with the laptop widget over the local network -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginTop="16dp">
-
-        <Button
-            android:id="@+id/btnLinkDevice"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Link Device"
-            android:backgroundTint="#444444"
-            android:textColor="#FFFFFF"
-            style="@style/Widget.MaterialComponents.Button" />
-
-        <Button
-            android:id="@+id/btnPairCode"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Pair Code"
-            android:layout_marginStart="8dp"
-            android:backgroundTint="#2a2a2a"
-            android:textColor="#bbbbbb"
-            style="@style/Widget.MaterialComponents.Button" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/syncStatusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Not linked"
-        android:textColor="#555555"
-        android:textSize="14sp"
-        android:fontFamily="sans-serif"
-        android:layout_marginTop="8dp" />
-
-    <TextView
-        android:id="@+id/serverListLabel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Discord Servers"
-        android:textColor="#888888"
-        android:textSize="14sp"
-        android:layout_marginTop="16dp"
-        android:visibility="gone" />
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/serverRecyclerView"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:maxHeight="200dp"
-        android:layout_marginTop="8dp" />
-
-    <!-- Discord status -->
-    <TextView
-        android:id="@+id/discordStatus"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Discord: Offline"
-        android:textColor="#555555"
-        android:textSize="14sp"
-        android:fontFamily="sans-serif"
-        android:layout_marginTop="16dp" />
-
-    <!-- Log area -->
     <ScrollView
-        android:id="@+id/logScroll"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:layout_marginTop="24dp"
-        android:fillViewport="true">
+        android:fillViewport="true"
+        android:scrollbars="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center_horizontal"
+            android:paddingBottom="8dp">
+
+            <!-- Heart rate -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Heart rate"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.08"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/statusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Ready"
+                android:textColor="#888888"
+                android:textSize="16sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:id="@+id/bpmText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="-- BPM"
+                android:textColor="#FFFFFF"
+                android:textSize="64sp"
+                android:fontFamily="sans-serif-black"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="16dp">
+
+                <Button
+                    android:id="@+id/btnStartHr"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Start Scan"
+                    android:backgroundTint="#444444"
+                    android:textColor="#FFFFFF"
+                    style="@style/Widget.MaterialComponents.Button" />
+
+                <Button
+                    android:id="@+id/btnStopHr"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Stop"
+                    android:layout_marginStart="8dp"
+                    android:backgroundTint="#444444"
+                    android:textColor="#FFFFFF"
+                    style="@style/Widget.MaterialComponents.Button" />
+            </LinearLayout>
+
+            <!-- Display -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Display"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.08"
+                android:layout_marginTop="28dp"
+                android:layout_marginBottom="4dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchPulse"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Pulse Animation"
+                android:textColor="#FFFFFF"
+                android:layout_marginTop="4dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchFloating"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Floating Widget"
+                android:textColor="#FFFFFF"
+                android:layout_marginTop="4dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchShowBpm"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Show BPM Number"
+                android:textColor="#FFFFFF"
+                android:layout_marginTop="4dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchNewThresholds"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Sitting Thresholds"
+                android:textColor="#FFFFFF"
+                android:layout_marginTop="4dp" />
+
+            <Button
+                android:id="@+id/btnPulseScreen"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Pulse Screen"
+                android:layout_marginTop="8dp"
+                android:layout_gravity="start"
+                android:backgroundTint="#444444"
+                android:textColor="#FFFFFF"
+                style="@style/Widget.MaterialComponents.Button" />
+
+            <!-- Sound -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Sound"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.08"
+                android:layout_marginTop="28dp"
+                android:layout_marginBottom="4dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchHeartbeatSound"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Heartbeat Sound"
+                android:textColor="#FFFFFF"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/heartbeatSoundVolumeLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Heartbeat Volume: 100%"
+                android:textColor="#BBBBBB"
+                android:textSize="14sp"
+                android:layout_marginTop="8dp" />
+
+            <SeekBar
+                android:id="@+id/heartbeatSoundVolumeSeekBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="100"
+                android:contentDescription="Heartbeat sound volume" />
+
+            <Spinner
+                android:id="@+id/heartbeatSoundEffectSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:contentDescription="Heartbeat sound effect"
+                android:popupBackground="#333333" />
+
+            <!-- Discord -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Discord"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.08"
+                android:layout_marginTop="28dp"
+                android:layout_marginBottom="4dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchDiscord"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Discord Bot"
+                android:textColor="#FFFFFF"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/discordStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Discord: Offline"
+                android:textColor="#555555"
+                android:textSize="14sp"
+                android:fontFamily="sans-serif"
+                android:layout_marginTop="4dp" />
+
+            <Button
+                android:id="@+id/btnManageServers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Manage Servers"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#333333"
+                android:textColor="#FFFFFF"
+                style="@style/Widget.MaterialComponents.Button" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Choose which servers get a live BPM nickname. Others stay BPMsworth."
+                android:textColor="#666666"
+                android:textSize="12sp"
+                android:layout_marginTop="6dp" />
+
+            <!-- Sync -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Device sync"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.08"
+                android:layout_marginTop="28dp"
+                android:layout_marginBottom="4dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginTop="4dp">
+
+                <Button
+                    android:id="@+id/btnLinkDevice"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Link Device"
+                    android:backgroundTint="#444444"
+                    android:textColor="#FFFFFF"
+                    style="@style/Widget.MaterialComponents.Button" />
+
+                <Button
+                    android:id="@+id/btnPairCode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Pair Code"
+                    android:layout_marginStart="8dp"
+                    android:backgroundTint="#2a2a2a"
+                    android:textColor="#bbbbbb"
+                    style="@style/Widget.MaterialComponents.Button" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/syncStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Not linked"
+                android:textColor="#555555"
+                android:textSize="14sp"
+                android:fontFamily="sans-serif"
+                android:layout_marginTop="8dp" />
+
+        </LinearLayout>
+    </ScrollView>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Log"
+        android:textColor="#888888"
+        android:textSize="12sp"
+        android:textAllCaps="true"
+        android:letterSpacing="0.08"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="4dp" />
+
+    <ScrollView
+        android:id="@+id/logScroll"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:fillViewport="true"
+        android:background="#0a0a0a"
+        android:padding="8dp">
 
         <TextView
             android:id="@+id/logText"

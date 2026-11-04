@@ -20,13 +20,9 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
-import android.view.LayoutInflater
 import android.view.View
-import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
 import android.widget.Toast
 import com.google.android.material.switchmaterial.SwitchMaterial
 
@@ -42,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPulseScreen: Button
     private lateinit var btnLinkDevice: Button
     private lateinit var btnPairCode: Button
+    private lateinit var btnManageServers: Button
     private lateinit var syncStatusText: TextView
     private lateinit var switchDiscord: SwitchMaterial
     private lateinit var switchPulse: SwitchMaterial
@@ -52,7 +49,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchFloating: SwitchMaterial
     private lateinit var switchShowBpm: SwitchMaterial
     private lateinit var switchNewThresholds: SwitchMaterial
-    private lateinit var serverRecyclerView: RecyclerView
 
     private var service: HeartRateService? = null
     private var bound = false
@@ -77,13 +73,14 @@ class MainActivity : AppCompatActivity() {
                 if (service?.isDiscordEnabled == false && switchDiscord.isChecked) {
                     switchDiscord.isChecked = false
                 }
+                refreshManageServersButton()
             }
         }
         override fun onLog(message: String) {
             runOnUiThread { appendLog(message) }
         }
         override fun onGuildsUpdated(guilds: List<HeartRateService.GuildInfo>) {
-            runOnUiThread { updateServerList() }
+            runOnUiThread { refreshManageServersButton() }
         }
         override fun onSyncStatusUpdate(status: String) {
             runOnUiThread { syncStatusText.text = status }
@@ -182,8 +179,7 @@ class MainActivity : AppCompatActivity() {
         switchFloating = findViewById(R.id.switchFloating)
         switchShowBpm = findViewById(R.id.switchShowBpm)
         switchNewThresholds = findViewById(R.id.switchNewThresholds)
-        serverRecyclerView = findViewById(R.id.serverRecyclerView)
-        serverRecyclerView.layoutManager = LinearLayoutManager(this)
+        btnManageServers = findViewById(R.id.btnManageServers)
 
         heartbeatSoundEffectSpinner.adapter = ArrayAdapter(
             this,
@@ -312,7 +308,12 @@ class MainActivity : AppCompatActivity() {
                         Toast.LENGTH_LONG
                     ).show()
                 }
+                refreshManageServersButton()
             }
+        }
+
+        btnManageServers.setOnClickListener {
+            startActivity(Intent(this, ServerListActivity::class.java))
         }
 
         switchShowBpm.setOnCheckedChangeListener { _, isChecked ->
@@ -423,7 +424,16 @@ class MainActivity : AppCompatActivity() {
             if (it.currentBpm > 0) {
                 updateBpm(it.currentBpm)
             }
-            updateServerList()
+            refreshManageServersButton()
+        }
+    }
+
+    private fun refreshManageServersButton() {
+        val count = service?.getGuilds()?.size ?: 0
+        btnManageServers.text = if (count > 0) {
+            "Manage Servers ($count)"
+        } else {
+            "Manage Servers"
         }
     }
 
@@ -565,41 +575,4 @@ class MainActivity : AppCompatActivity() {
         logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 
-    private fun updateServerList() {
-        service?.let {
-            val guilds = it.getGuilds()
-            findViewById<View>(R.id.serverListLabel).visibility = if (guilds.isNotEmpty()) View.VISIBLE else View.GONE
-            serverRecyclerView.adapter = ServerAdapter(guilds) { id, enabled ->
-                it.toggleGuild(id, enabled)
-            }
-        }
-    }
-
-    class ServerAdapter(
-        private val guilds: List<HeartRateService.GuildInfo>,
-        private val onToggle: (String, Boolean) -> Unit
-    ) : RecyclerView.Adapter<ServerAdapter.ViewHolder>() {
-
-        class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
-            val nameText: TextView = view.findViewById(R.id.guildName)
-            val switch: SwitchMaterial = view.findViewById(R.id.guildSwitch)
-        }
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-            val view = LayoutInflater.from(parent.context)
-                .inflate(R.layout.item_server, parent, false)
-            return ViewHolder(view)
-        }
-
-        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-            val guild = guilds[position]
-            holder.nameText.text = guild.name
-            holder.switch.isChecked = guild.isEnabled
-            holder.switch.setOnCheckedChangeListener { _, isChecked ->
-                onToggle(guild.id, isChecked)
-            }
-        }
-
-        override fun getItemCount() = guilds.size
-    }
 }

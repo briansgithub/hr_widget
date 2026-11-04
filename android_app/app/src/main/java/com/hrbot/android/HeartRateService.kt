@@ -124,6 +124,8 @@ class HeartRateService : Service() {
     private var bluetoothAdapter: BluetoothAdapter? = null
     private var scanner: BluetoothLeScanner? = null
     private var gatt: BluetoothGatt? = null
+    private var lastFitbitAddress: String? = null
+    private var reconnectAttempt = 0
     private var scanning = false
     var currentBpm = 0
         private set
@@ -140,6 +142,9 @@ class HeartRateService : Service() {
             ) {
                 log("Heart rate data stale (45s). Neutralizing.")
                 updateBpm(0)
+                // A live GATT that has stopped delivering measurements is the usual
+                // supervision-timeout precursor. Drop it so the reconnect path runs.
+                try { gatt?.disconnect() } catch (_: Exception) {}
             }
             handler.postDelayed(this, 5000)
         }
@@ -434,6 +439,7 @@ class HeartRateService : Service() {
             wakeLock?.release()
         }
         handler.removeCallbacks(stalenessRunnable)
+        handler.removeCallbacks(reconnectRunnable)
         
         currentBpm = 0
         pulseClock.synchronize(0, null, SystemClock.elapsedRealtimeNanos())
@@ -770,7 +776,8 @@ class HeartRateService : Service() {
         }
     }
 
-    fun getGuilds(): List<GuildInfo> = guilds.values.toList()
+    fun getGuilds(): List<GuildInfo> =
+        guilds.values.sortedBy { it.name.lowercase() }
 
     /**
      * Centralized BPM color logic matching the desktop widget thresholds.
@@ -966,6 +973,29 @@ class HeartRateService : Service() {
         // Stop scanning after 2 minutes if nothing found to save battery
         handler.removeCallbacks(scanTimeoutRunnable)
         handler.postDelayed(scanTimeoutRunnable, 120_000)
+        connectKnownFitbit()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun knownFitbitDevice(): BluetoothDevice? {
+        val adapter = bluetoothAdapter ?: return null
+        val bonded = adapter.bondedDevices.orEmpty()
+        val byName = bonded.firstOrNull { device ->
+            val name = try { device.name } catch (_: Exception) { null } ?: ""
+            "Charge" in name || "Fitbit" in name
+        }
+        if (byName != null) return byName
+        val saved = lastFitbitAddress ?: return null
+        return try { adapter.getRemoteDevice(saved) } catch (_: Exception) { null }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectKnownFitbit() {
+        val match = knownFitbitDevice()
+        if (match != null && gatt == null && trackingRequested) {
+            stopScan()
+            connectToDevice(match)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -982,14 +1012,8 @@ class HeartRateService : Service() {
         if (scanning) {
             stopScan()
             if (trackingRequested) {
-                log("Scan timeout (2m). Waiting 30s before persistent retry...")
-                handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan Idle...") } }
-                updateNotification("Scan Idle — Waiting to retry")
-                handler.postDelayed({
-                    if (trackingRequested && !scanning && gatt == null && syncRole != SyncLinkManager.ROLE_MIRROR) {
-                        startScan()
-                    }
-                }, 30_000)
+                log("Scan timeout (2m). Reconnecting.")
+                scheduleReconnect("scan-timeout")
             } else {
                 log("Scan timeout (2m). Stopping.")
                 handler.post { uiCallbacks.forEach { it.onStatusUpdate("Scan Timeout") } }
@@ -1002,24 +1026,43 @@ class HeartRateService : Service() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             if (!scanning || gatt != null || !trackingRequested) return
-            val name = result.device.name ?: return
-            if ("Charge" in name || "Fitbit" in name) {
-                log("Found: $name (${result.device.address})")
+            val name = result.device.name
+            val mfg = result.scanRecord?.manufacturerSpecificData
+            var fitbitMfg = false
+            if (mfg != null) {
+                for (i in 0 until mfg.size()) {
+                    if (mfg.keyAt(i) == 0x012D) fitbitMfg = true
+                }
+            }
+            val namedFitbit = name != null && ("Charge" in name || "Fitbit" in name)
+            if (namedFitbit || fitbitMfg) {
+                log("Found: ${name ?: "Heart Rate"} (${result.device.address})")
                 stopScan()
                 connectToDevice(result.device)
             }
         }
 
         override fun onScanFailed(errorCode: Int) {
-            log("Scan failed (error $errorCode). Retrying in 3s...")
+            log("Scan failed (error $errorCode). Retrying...")
             scanning = false
             handler.removeCallbacks(scanTimeoutRunnable)
-            handler.postDelayed({
-                if (trackingRequested && gatt == null && !scanning && syncRole != SyncLinkManager.ROLE_MIRROR) {
-                    startScan()
-                }
-            }, 3_000)
+            scheduleReconnect("scan-failed")
         }
+    }
+
+    private val reconnectRunnable = Runnable {
+        if (!trackingRequested || gatt != null || scanning || syncRole == SyncLinkManager.ROLE_MIRROR) return@Runnable
+        startScan()
+    }
+
+    private fun scheduleReconnect(reason: String) {
+        if (!trackingRequested || syncRole == SyncLinkManager.ROLE_MIRROR) return
+        handler.removeCallbacks(reconnectRunnable)
+        val delayMs = (1_000L shl reconnectAttempt.coerceAtMost(4)).coerceAtMost(16_000L)
+        reconnectAttempt += 1
+        log("Reconnecting ($reason) in ${delayMs}ms...")
+        handler.post { uiCallbacks.forEach { it.onStatusUpdate("Reconnecting...") } }
+        handler.postDelayed(reconnectRunnable, delayMs)
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1044,6 +1087,7 @@ class HeartRateService : Service() {
             log("Could not create GATT connection: ${e.message}")
             null
         }
+        if (gatt == null) scheduleReconnect("connect-failed")
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -1063,6 +1107,9 @@ class HeartRateService : Service() {
                         if (gatt === g) gatt = null
                         return
                     }
+                    lastFitbitAddress = g.device.address
+                    reconnectAttempt = 0
+                    g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
                     log("Connected! Discovering services...")
                     handler.post { uiCallbacks.forEach { it.onStatusUpdate("Discovering...") } }
                     g.discoverServices()
@@ -1075,12 +1122,7 @@ class HeartRateService : Service() {
                     syncLink?.notifyFitbitState(false)
 
                     if (trackingRequested && syncRole != SyncLinkManager.ROLE_MIRROR) {
-                        log("Persistent mode active. Restarting scan in 5s...")
-                        handler.postDelayed({
-                            if (trackingRequested && gatt == null && !scanning && syncRole != SyncLinkManager.ROLE_MIRROR) {
-                                startScan()
-                            }
-                        }, 5_000)
+                        scheduleReconnect("status-$status")
                     }
                 }
             }
@@ -1094,24 +1136,28 @@ class HeartRateService : Service() {
             }
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 log("Service discovery failed (status $status)")
+                try { g.disconnect() } catch (_: Exception) {}
                 return
             }
 
             val hrService = g.getService(HR_SERVICE_UUID)
             if (hrService == null) {
                 log("Heart Rate service not found on device!")
+                try { g.disconnect() } catch (_: Exception) {}
                 return
             }
 
             val hrChar = hrService.getCharacteristic(HR_MEASUREMENT_UUID)
             if (hrChar == null) {
                 log("HR Measurement characteristic not found!")
+                try { g.disconnect() } catch (_: Exception) {}
                 return
             }
 
             // Enable notifications locally
             if (!g.setCharacteristicNotification(hrChar, true)) {
                 log("Could not enable local HR notifications")
+                try { g.disconnect() } catch (_: Exception) {}
                 return
             }
 
@@ -1119,6 +1165,7 @@ class HeartRateService : Service() {
             val descriptor = hrChar.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG)
             if (descriptor == null) {
                 log("CCC descriptor not found — notifications may not work")
+                try { g.disconnect() } catch (_: Exception) {}
                 return
             }
 
@@ -1135,7 +1182,20 @@ class HeartRateService : Service() {
                 syncLink?.notifyFitbitState(true)
             } else {
                 log("Could not start HR notification setup")
+                try { g.disconnect() } catch (_: Exception) {}
             }
+        }
+
+        override fun onDescriptorWrite(
+            g: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int
+        ) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                try { g.disconnect() } catch (_: Exception) {}
+                return
+            }
+            reconnectAttempt = 0
         }
 
         override fun onCharacteristicChanged(

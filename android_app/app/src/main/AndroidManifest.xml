@@ -45,6 +45,12 @@
             android:exported="false"
             android:theme="@style/Theme.HRBot" />
 
+        <activity
+            android:name=".ServerListActivity"
+            android:exported="false"
+            android:theme="@style/Theme.HRBot"
+            android:parentActivityName=".MainActivity" />
+
         <service
             android:name=".HeartRateService"
             android:foregroundServiceType="connectedDevice|mediaPlayback"
