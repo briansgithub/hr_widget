@@ -15,7 +15,7 @@ from keyboard_sync import JsonLineProtocol
 
 ALIAS = "hrclevobroker-exp.exe"
 BACKEND_ID = "clevo-dchu-103-static-experimental"
-BACKEND_VERSION = "0.2.6"
+BACKEND_VERSION = "0.2.7"
 HARDWARE_IDENTITY = "Micro Electronics Inc|1520|PB50EF-G"
 LEVELS = (0, 1, 2, 3, 4, 3, 2, 1, 0)
 

@@ -107,6 +107,9 @@ class SyncLink:
         self._peer_fitbit_connected = False
         self._peer_connected_since = None
         self.last_bpm_received_at = 0
+        # When we last entered ROLE_MIRROR. Anchors the relay-staleness window
+        # until the first relayed reading arrives; see mirror_is_stale().
+        self.mirror_since = 0
         self.last_peer_activity_at = 0
 
         self._aiozc = None
@@ -182,6 +185,21 @@ class SyncLink:
             if phase is not None:
                 payload["phase"] = phase
             asyncio.ensure_future(self._send(self._ws, payload))
+
+    def mirror_is_stale(self, timeout=30.0, now=None):
+        """True when we are MIRRORing but the peer's relay has gone quiet.
+
+        Before the first relayed reading arrives the window runs from the
+        moment we became MIRROR, not from the epoch. Measuring against a bare
+        ``last_bpm_received_at == 0`` makes a freshly-linked mirror look
+        decades stale, which sends the widget straight back to scanning and
+        racing the peer for the Fitbit's single BLE slot.
+        """
+        if self.role != ROLE_MIRROR:
+            return False
+        now = time.time() if now is None else now
+        anchor = self.last_bpm_received_at or self.mirror_since or now
+        return (now - anchor) > timeout
 
     # --- linking ---------------------------------------------------------
 
@@ -345,6 +363,11 @@ class SyncLink:
 
         _dbg(f"_renegotiate: mine(conn={self._fitbit_connected}, ts={mine_ts}) "
              f"theirs(conn={remote_connected}, ts={theirs_ts}) -> {new_role}")
+        if new_role == ROLE_MIRROR:
+            if self.role != ROLE_MIRROR:
+                self.mirror_since = time.time()
+        else:
+            self.mirror_since = 0
         self.role = new_role
         self.on_role_change(self.role, self.peer_name)
         if self.role == ROLE_MIRROR:
@@ -410,5 +433,6 @@ class SyncLink:
                 pass
         self.role = ROLE_UNLINKED
         self.peer_name = None
+        self.mirror_since = 0
         self.on_role_change(self.role, None)
         self.on_status(f"Not linked ({reason})" if reason else "Not linked")

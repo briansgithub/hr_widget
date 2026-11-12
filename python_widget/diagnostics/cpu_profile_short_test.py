@@ -112,6 +112,9 @@ def main() -> int:
     aborted = False
     counter_process, counter_output = _start_counter_stream()
     try:
+        # Prime the counter process before saturating every logical processor.
+        # Otherwise its first PowerShell sample can be starved past the timeout.
+        _next_counter_sample(counter_output)
         for worker in workers:
             worker.start()
         print("LOAD_STARTED", flush=True)

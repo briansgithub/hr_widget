@@ -10,7 +10,9 @@ $paths = @(
     "\Processor Information(_Total)\Performance Limit Flags"
 )
 
-Get-Counter -Counter $paths -SampleInterval 1 -MaxSamples 8 | ForEach-Object {
+# One sample is consumed while priming the stream, followed by two ramp samples
+# and six recorded samples.
+Get-Counter -Counter $paths -SampleInterval 1 -MaxSamples 9 | ForEach-Object {
     $values = [ordered]@{}
     foreach ($sample in $_.CounterSamples) {
         $path = $sample.Path.ToLowerInvariant()

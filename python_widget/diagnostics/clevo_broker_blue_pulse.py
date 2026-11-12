@@ -14,7 +14,7 @@ import uuid
 ALIAS = "hrclevobroker-exp.exe"
 HARDWARE_IDENTITY = "Micro Electronics Inc|1520|PB50EF-G"
 EXPECTED_BACKEND = "clevo-dchu-103-static-experimental"
-EXPECTED_VERSION = "0.2.6"
+EXPECTED_VERSION = "0.2.7"
 TIMEOUT_SECONDS = 2.0
 
 

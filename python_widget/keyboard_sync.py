@@ -12,8 +12,31 @@ import ctypes
 import json
 import math
 import shutil
+import threading
 import time
 import uuid
+
+_AGENT_LOG_PATH = r"h:\Desktop\widgets\hr_widget\.cursor\debug-e0ee23.log"
+_agent_log_lock = threading.Lock()
+
+
+def _agent_log(location, message, data, hypothesis_id):
+    payload = {
+        "sessionId": "e0ee23",
+        "runId": "pre-fix",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        line = json.dumps(payload, default=str) + "\n"
+        with _agent_log_lock:
+            with open(_AGENT_LOG_PATH, "a", encoding="utf-8") as handle:
+                handle.write(line)
+    except Exception:
+        pass
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -274,7 +297,7 @@ CLEVO_TARGET_ALLOWLIST: tuple[ClevoTarget, ...] = (
         led_package_version="7.68.0.0",
         led_package_status="Ok",
         control_center_package_name="CLEVOCO.ControlCenter3.0",
-        control_center_package_version="1.13.2.0",
+        control_center_package_version="7.68.1.0",
         control_center_package_status="Ok",
         required_services=frozenset({"CCDCHUService", "HKClipSvc"}),
     ),
@@ -502,8 +525,8 @@ class ClevoIpcBackend(KeyboardLightingBackend):
 
     _ALIAS = "hrclevobroker-exp.exe"
     _BACKEND_ID = "clevo-dchu-103-static-experimental"
-    _BACKEND_VERSION = "0.2.6"
-    _PACKAGE_PREFIX = "HRWidget.ClevoBroker.Experimental_0.2.6.0_x64__"
+    _BACKEND_VERSION = "0.2.7"
+    _PACKAGE_PREFIX = "HRWidget.ClevoBroker.Experimental_0.2.7.0_x64__"
     _HARDWARE_IDENTITY = "Micro Electronics Inc|1520|PB50EF-G"
     _REASON = (
         "Keyboard sync is unavailable unless this session explicitly enables "
@@ -1870,6 +1893,24 @@ class KeyboardSyncController:
                                     "ACK_MISMATCH",
                                     "The backend acknowledgment did not match the in-flight request.",
                                 )
+
+                        # #region agent log
+                        if isinstance(request, BrightnessRequest):
+                            duration_s = self._clock() - started_at
+                            if quarantine is not None or duration_s >= 0.2:
+                                _agent_log(
+                                    "keyboard_sync.py:_apply_loop",
+                                    "brightness apply settled",
+                                    {
+                                        "level": request.level,
+                                        "sequence": request.sequence,
+                                        "quarantine": None if quarantine is None else quarantine[0],
+                                        "duration_ms": round(duration_s * 1000.0, 1),
+                                        "state": str(self._state),
+                                    },
+                                    "D",
+                                )
+                        # #endregion
 
                         async with self._state_lock:
                             if quarantine is not None:

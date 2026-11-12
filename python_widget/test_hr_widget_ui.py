@@ -568,5 +568,40 @@ class KeyboardSyncUiTests(unittest.TestCase):
         self.assertEqual(widget._last_keyboard_brightness_request_time, float("-inf"))
 
 
+class MirrorStatusTests(unittest.TestCase):
+    """While MIRRORing, the link-status loop and the relayed-bpm callback both
+    write to the same caption. Only the loop must yield: update_data(text)
+    defaults to bpm=0, so an unguarded status write erases a live reading and
+    the display flips between the BPM and "Mirroring <peer>" once a second."""
+
+    def _widget(self, current_bpm):
+        widget = HeartRateWidget.__new__(HeartRateWidget)
+        widget.current_bpm = current_bpm
+        widget.update_data_calls = []
+        widget.update_data = lambda *args, **kwargs: widget.update_data_calls.append(
+            (args, kwargs)
+        )
+        return widget
+
+    def test_status_write_leaves_a_live_reading_alone(self):
+        widget = self._widget(72)
+        widget.update_status_if_idle("Mirroring Pixel 7a")
+        self.assertEqual(widget.update_data_calls, [])
+
+    def test_status_write_applies_when_no_reading_is_shown(self):
+        widget = self._widget(0)
+        widget.update_status_if_idle("Mirroring Pixel 7a")
+        self.assertEqual(widget.update_data_calls, [(("Mirroring Pixel 7a",), {})])
+
+    def test_sync_status_defers_to_a_live_reading(self):
+        widget = self._widget(88)
+        widget.on_sync_status("Mirroring HR from Pixel 7a")
+        self.assertEqual(widget.update_data_calls, [])
+
+        widget.current_bpm = 0
+        widget.on_sync_status("Not linked (link lost)")
+        self.assertEqual(widget.update_data_calls, [(("Not linked (link lost)",), {})])
+
+
 if __name__ == "__main__":
     unittest.main()

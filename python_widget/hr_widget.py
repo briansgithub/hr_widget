@@ -7,6 +7,7 @@ import os
 import sys
 import signal
 import ctypes
+import json
 import queue
 import socket
 import cProfile, pstats, atexit
@@ -56,6 +57,30 @@ KEYBOARD_BRIGHTNESS_LATENCY_LEAD_SECONDS = 0.025
 
 # Standard Bluetooth LE Heart Rate UUID
 HR_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+
+_AGENT_LOG_PATH = r"h:\Desktop\widgets\hr_widget\.cursor\debug-e0ee23.log"
+_agent_log_lock = threading.Lock()
+_agent_last_hr_monotonic = None
+_agent_mirror_takeover = False
+
+
+def _agent_log(location, message, data, hypothesis_id):
+    payload = {
+        "sessionId": "e0ee23",
+        "runId": "pre-fix",
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        line = json.dumps(payload, default=str) + "\n"
+        with _agent_log_lock:
+            with open(_AGENT_LOG_PATH, "a", encoding="utf-8") as handle:
+                handle.write(line)
+    except Exception:
+        pass
 
 # --- PROFILING SETUP ---
 profiler = cProfile.Profile()
@@ -1141,6 +1166,21 @@ class HeartRateWidget:
         if not self._bpm_data_is_stale(monotonic_now):
             return False
 
+        # #region agent log
+        now_m = time.perf_counter() if monotonic_now is None else monotonic_now
+        last_m = getattr(self, "last_bpm_received_monotonic", None)
+        _agent_log(
+            "hr_widget.py:_expire_stale_bpm",
+            "stale bpm expired",
+            {
+                "bpm": self.current_bpm,
+                "age_s": None if last_m is None else round(now_m - last_m, 1),
+                "status": self.status_text,
+                "role": sync_link_ref.role if sync_link_ref else None,
+            },
+            "C",
+        )
+        # #endregion
         self.current_bpm = 0
         self.last_received_bpm = 0
         self.status_text = "-- BPM"
@@ -1255,6 +1295,20 @@ class HeartRateWidget:
             messagebox.showinfo("Pairing Code", f"Pairing code set to: {updated}", parent=self.root)
 
     def on_sync_role_change(self, role, peer_name):
+        # #region agent log
+        _agent_log(
+            "hr_widget.py:on_sync_role_change",
+            "sync role changed",
+            {
+                "role": role,
+                "has_peer": bool(peer_name),
+                "bpm": self.current_bpm,
+                "local_fitbit": bool(sync_link_ref and sync_link_ref._fitbit_connected),
+                "peer_fitbit": bool(sync_link_ref and sync_link_ref._peer_fitbit_connected),
+            },
+            "B",
+        )
+        # #endregion
         # A stale last_sent_bpm cache could make update_nickname() wrongly
         # believe Discord already shows the right value after regaining HOST
         # (if the current bpm happens to match whatever we last wrote before
@@ -1277,9 +1331,8 @@ class HeartRateWidget:
 
     def on_sync_status(self, text):
         print(f"[sync] {text}")
-        # Show network status if we don't have a live heart rate
-        if self.current_bpm <= 0:
-            self.update_data(text)
+        # Show network status only if we don't have a live heart rate.
+        self.update_status_if_idle(text)
 
     def _submit_keyboard_sync(self, coroutine_factory, on_done=None):
         """Run keyboard-sync work on the app's asyncio thread.
@@ -1607,11 +1660,29 @@ class HeartRateWidget:
     def _complete_keyboard_brightness_request(self, completed, requested_level, generation):
         if self._keyboard_brightness_request_future is completed:
             self._keyboard_brightness_request_future = None
+        error = None
         try:
             accepted = bool(completed.result())
         except Exception as exc:
             accepted = False
-            print(f"[keyboard sync] Brightness request failed: {type(exc).__name__}: {exc}")
+            error = f"{type(exc).__name__}: {exc}"
+            print(f"[keyboard sync] Brightness request failed: {error}")
+        # #region agent log
+        sent_at = getattr(self, "_agent_brightness_sent_at", None)
+        _agent_log(
+            "hr_widget.py:_complete_keyboard_brightness_request",
+            "brightness request finished",
+            {
+                "accepted": accepted,
+                "level": requested_level,
+                "error": error,
+                "age_s": None if sent_at is None else round(time.perf_counter() - sent_at, 3),
+                "state": str(self.keyboard_sync.state),
+                "bpm": self.current_bpm,
+            },
+            "D",
+        )
+        # #endregion
         if (
             accepted
             and generation == self._keyboard_sync_generation
@@ -1620,6 +1691,45 @@ class HeartRateWidget:
             self._last_requested_keyboard_brightness = requested_level
 
     def _request_current_keyboard_brightness(self, monotonic_now):
+        # #region agent log
+        diag = None
+        if (
+            self._keyboard_brightness_request_future is not None
+            and self._keyboard_sync_desired
+            and self.keyboard_sync.enabled
+        ):
+            pending_for = monotonic_now - getattr(self, "_agent_brightness_sent_at", monotonic_now)
+            if pending_for >= 0.4 and monotonic_now - getattr(self, "_agent_last_stall_log", 0.0) >= 1.0:
+                self._agent_last_stall_log = monotonic_now
+                diag = {
+                    "kind": "stall",
+                    "pending_s": round(pending_for, 3),
+                    "bpm": self.current_bpm,
+                    "phase": round(self.pulse_phase, 3),
+                    "last_level": self._last_requested_keyboard_brightness,
+                    "state": str(self.keyboard_sync.state),
+                    "status": self.status_text,
+                }
+        elif (
+            self._keyboard_sync_desired
+            and not self.keyboard_sync.enabled
+            and monotonic_now - getattr(self, "_agent_last_kb_off_log", 0.0) >= 5.0
+        ):
+            self._agent_last_kb_off_log = monotonic_now
+            diag = {
+                "kind": "not_enabled",
+                "state": str(self.keyboard_sync.state),
+                "bpm": self.current_bpm,
+                "status": self.status_text,
+            }
+        if diag:
+            _agent_log(
+                "hr_widget.py:_request_current_keyboard_brightness",
+                "brightness path blocked",
+                diag,
+                "D",
+            )
+        # #endregion
         if (
             not self._keyboard_sync_desired
             or self._keyboard_sync_future is not None
@@ -1665,6 +1775,22 @@ class HeartRateWidget:
 
         generation = self._keyboard_sync_generation
         self._last_keyboard_brightness_request_time = monotonic_now
+        self._agent_brightness_sent_at = monotonic_now
+        # #region agent log
+        _agent_log(
+            "hr_widget.py:_request_current_keyboard_brightness",
+            "brightness queued",
+            {
+                "level": requested_level,
+                "bpm": self.current_bpm,
+                "phase": round(self.pulse_phase, 3),
+                "sin": round(math.sin(self.pulse_phase), 3),
+                "status": self.status_text,
+                "state": str(self.keyboard_sync.state),
+            },
+            "E",
+        )
+        # #endregion
         self._keyboard_brightness_request_future = self._submit_keyboard_sync(
             lambda: self.keyboard_sync.request_brightness(requested_level),
             lambda completed: self._complete_keyboard_brightness_request(
@@ -2090,6 +2216,19 @@ class HeartRateWidget:
         if self.root.state() != "withdrawn":
             self.animate()
 
+    def update_status_if_idle(self, status):
+        """Set the caption only while no heart rate is on screen.
+
+        update_data() defaults to bpm=0, which is a real "no reading" event:
+        it clears current_bpm, resets the pulse clock, halts heartbeat audio
+        and zeroes the Discord bot's cached bpm. Callers that merely want to
+        describe link state must not do that to a live reading -- a status
+        loop and an incoming-bpm callback that both write unconditionally
+        just overwrite each other, and the display flips between the two.
+        """
+        if self.current_bpm <= 0:
+            self.update_data(status)
+
 # --- BLUETOOTH STABILITY LOGIC ---
 
 _screen_off_triggered = False
@@ -2117,10 +2256,30 @@ async def _hibernate_after_keyboard_sync(app):
 
 def hr_handler(sender, data, app):
     global _screen_off_triggered, _last_screen_off, _below_threshold_start_time, _bot_ref
+    global _agent_last_hr_monotonic
+
+    now_m = time.perf_counter()
+    gap_s = None if _agent_last_hr_monotonic is None else now_m - _agent_last_hr_monotonic
+    _agent_last_hr_monotonic = now_m
+    ignored_mirror = bool(sync_link_ref and sync_link_ref.role == ROLE_MIRROR)
+    # #region agent log
+    if gap_s is None or gap_s >= 2.0 or ignored_mirror:
+        _agent_log(
+            "hr_widget.py:hr_handler",
+            "hr notification",
+            {
+                "bpm": data[1] if len(data) > 1 else None,
+                "gap_s": None if gap_s is None else round(gap_s, 3),
+                "ignored_mirror": ignored_mirror,
+                "role": sync_link_ref.role if sync_link_ref else None,
+            },
+            "B" if ignored_mirror else "C",
+        )
+    # #endregion
 
     # CRITICAL: If we are in MIRROR mode, ignore local BLE data.
     # The LAN relay is our primary source of truth now.
-    if sync_link_ref and sync_link_ref.role == ROLE_MIRROR:
+    if ignored_mirror:
         return
 
     bpm = data[1]
@@ -2202,13 +2361,17 @@ async def scan_and_connect(app):
         # EXCEPT: If we haven't received a heart rate packet in 30 seconds,
         # the peer might have stalled, so we attempt to take over.
         if sync_link_ref and sync_link_ref.role == ROLE_MIRROR:
-            stale_mirror = (time.time() - sync_link_ref.last_bpm_received_at) > 30.0
-            if not stale_mirror:
-                app.root.after(0, app.update_data, f"Mirroring {sync_link_ref.peer_name}")
+            if not sync_link_ref.mirror_is_stale():
+                # Caption only; the relayed readings own the BPM display.
+                app.root.after(
+                    0, app.update_status_if_idle, f"Mirroring {sync_link_ref.peer_name}"
+                )
                 await asyncio.sleep(1.0)
                 continue
             else:
                 print("Mirror data stale (>30s). Attempting to take over HOST role...")
+                global _agent_mirror_takeover
+                _agent_mirror_takeover = True
                 # We don't force-change the role here, we just fall through
                 # to the scanning phase. If we find the Fitbit, notify_fitbit_state(True)
                 # will trigger a role negotiation that makes us the HOST.
@@ -2244,13 +2407,30 @@ async def scan_and_connect(app):
             continue
 
         # --- 2. CONNECTING PHASE ---
+        drop_reason = "context-exit"
+        disconnect_seen = False
+        session_started = False
+        notify_error = None
+        session_ended_at = None
+        connected_at = time.perf_counter()
+        address_tail = (getattr(target_device, "address", "") or "")[-4:]
         try:
             app.root.after(0, app.update_data, "Connecting...")
             print(f"Attempting connection to {target_device.address}...")
+
+            def _on_ble_disconnect(_client):
+                nonlocal disconnect_seen
+                disconnect_seen = True
             
-            async with BleakClient(target_device, timeout=5.0) as client:
+            async with BleakClient(
+                target_device,
+                timeout=5.0,
+                disconnected_callback=_on_ble_disconnect,
+            ) as client:
+                session_started = True
                 # Check again once connected but before subscribing
                 if sync_link_ref and sync_link_ref.role == ROLE_MIRROR:
+                    drop_reason = "role-mirror"
                     print("Role changed to MIRROR during connection; dropping BLE.")
                     break
 
@@ -2299,14 +2479,46 @@ async def scan_and_connect(app):
                     if sync_link_ref:
                         sync_link_ref.notify_fitbit_state(True)
 
+                    connected_at = time.perf_counter()
+                    next_watch = connected_at + 15.0
                     while client.is_connected:
                         await asyncio.sleep(1)
+                        # #region agent log
+                        now_m = time.perf_counter()
+                        if now_m >= next_watch:
+                            next_watch = now_m + 15.0
+                            since_hr = (
+                                None
+                                if _agent_last_hr_monotonic is None
+                                else round(now_m - _agent_last_hr_monotonic, 3)
+                            )
+                            _agent_log(
+                                "hr_widget.py:scan_and_connect",
+                                "ble link watch",
+                                {
+                                    "connected_s": round(now_m - connected_at, 1),
+                                    "since_hr_s": since_hr,
+                                    "is_connected": bool(client.is_connected),
+                                    "disconnect_callback": disconnect_seen,
+                                    "bpm": app.current_bpm,
+                                    "role": sync_link_ref.role if sync_link_ref else None,
+                                    "kb_state": str(app.keyboard_sync.state),
+                                    "kb_enabled": bool(app.keyboard_sync.enabled),
+                                    "brightness_in_flight": app._keyboard_brightness_request_future is not None,
+                                    "last_level": app._last_requested_keyboard_brightness,
+                                    "status": app.status_text,
+                                },
+                                "A",
+                            )
+                        # #endregion
 
                 except Exception as e:
+                    notify_error = f"{type(e).__name__}: {e}"
                     print(f"Request rejected: {e}")
                     pass
 
             # Once the connection drops:
+            session_ended_at = time.perf_counter()
             print("Connection lost. Resetting target and retrying in 3s...")
             target_device = None
             if _bot_ref:
@@ -2317,6 +2529,8 @@ async def scan_and_connect(app):
             await asyncio.sleep(3.0)
 
         except Exception as e:
+            drop_reason = f"{type(e).__name__}: {e}"
+            session_ended_at = time.perf_counter()
             print(f"Connection failed: {e}. Retrying in 3s...")
             if _bot_ref:
                 _bot_ref.current_bpm = 0
@@ -2325,6 +2539,33 @@ async def scan_and_connect(app):
             # Re-scan if the device can't be found (address may have changed)
             target_device = None
             await asyncio.sleep(3.0)
+        finally:
+            # #region agent log
+            if session_started or drop_reason != "context-exit":
+                now_m = session_ended_at if session_ended_at is not None else time.perf_counter()
+                since_hr = (
+                    None
+                    if _agent_last_hr_monotonic is None
+                    else round(now_m - _agent_last_hr_monotonic, 3)
+                )
+                _agent_log(
+                    "hr_widget.py:scan_and_connect",
+                    "ble session ended",
+                    {
+                        "reason": drop_reason,
+                        "disconnect_callback": disconnect_seen,
+                        "notify_error": notify_error,
+                        "connected_s": round(now_m - connected_at, 1),
+                        "since_hr_s": since_hr,
+                        "bpm": getattr(app, "current_bpm", None),
+                        "role": sync_link_ref.role if sync_link_ref else None,
+                        "mirror_takeover": _agent_mirror_takeover,
+                        "address_tail": address_tail,
+                    },
+                    "B" if drop_reason == "role-mirror" or _agent_mirror_takeover else "A",
+                )
+                _agent_mirror_takeover = False
+            # #endregion
 
 # --- MAIN ASYNC LOOP (runs BLE + Discord together) ---
 
