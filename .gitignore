@@ -44,3 +44,9 @@ wheels/
 # Python widget local configuration
 python_widget/guild_settings.json
 python_widget/sync_token.txt
+
+# Added for GitHub publication
+.cursor/
+*.log
+*.lnk
+.claude/
