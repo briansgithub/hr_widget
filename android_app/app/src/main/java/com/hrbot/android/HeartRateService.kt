@@ -23,6 +23,9 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import android.graphics.Color
 import com.hrbot.android.MainActivity
@@ -163,6 +166,10 @@ class HeartRateService : Service() {
         private set
     var heartbeatSoundVolumePercent = HeartbeatSoundVolume.DEFAULT_PERCENT
         private set
+    var isHeartbeatVibrationEnabled = false
+        private set
+    var heartbeatVibrationIntensityPercent = 75
+        private set
     var selectedHeartbeatSoundEffectId = HeartbeatSoundCatalog.DEFAULT_ID
         private set
     private var floatingManager: FloatingWidgetManager? = null
@@ -186,6 +193,7 @@ class HeartRateService : Service() {
     private var heartbeatSoundStreamId = 0
     private var heartbeatSoundLoaded = false
     private var heartbeatSoundRunnable: Runnable? = null
+    private var vibrator: Vibrator? = null
 
     private val phaseRunnable = object : Runnable {
         override fun run() {
@@ -251,6 +259,7 @@ class HeartRateService : Service() {
         loadThresholdSettings()
         loadFloatingSettings()
         loadShowBpmSettings()
+        loadHeartbeatVibrationSettings()
         
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HRBot:TrackingWakeLock")
@@ -373,6 +382,8 @@ class HeartRateService : Service() {
         handler.removeCallbacks(phaseRunnable)
         isHeartbeatSoundEnabled = false
         releaseHeartbeatSoundResources()
+        try { vibrator?.cancel() } catch (_: Exception) {}
+        vibrator = null
         heartbeatRunnable?.let { discordHandler.removeCallbacks(it) }
         discordHandler.removeCallbacks(presenceRunnable)
         super.onDestroy()
@@ -383,6 +394,8 @@ class HeartRateService : Service() {
         when {
             isHeartbeatSoundEnabled ->
                 log("App swiped away. Heartbeat sound remains active.")
+            isHeartbeatVibrationEnabled ->
+                log("App swiped away. Heartbeat vibration remains active.")
             syncRole != SyncLinkManager.ROLE_UNLINKED ->
                 log("App swiped away. Device link remains active.")
             else -> {
@@ -502,6 +515,7 @@ class HeartRateService : Service() {
         if (!enabled) {
             isHeartbeatSoundEnabled = false
             releaseHeartbeatSoundResources()
+            scheduleNextHeartbeat()
             stopStalenessMonitorIfIdle()
             if (!trackingRequested && wakeLock?.isHeld == true) wakeLock?.release()
             refreshForegroundServiceType()
@@ -524,6 +538,23 @@ class HeartRateService : Service() {
         notifyHeartbeatSoundState(true, null)
         if (heartbeatSoundLoaded && currentBpm > 0) scheduleNextHeartbeat()
         return true
+    }
+
+    fun toggleHeartbeatVibration(enabled: Boolean) {
+        if (isHeartbeatVibrationEnabled == enabled) return
+        isHeartbeatVibrationEnabled = enabled
+        saveHeartbeatVibrationSettings()
+        if (enabled) {
+            if (currentBpm > 0) scheduleNextHeartbeat()
+        } else {
+            try { vibrator?.cancel() } catch (_: Exception) {}
+            if (!isHeartbeatSoundEnabled) cancelHeartbeatSchedule()
+        }
+    }
+
+    fun setHeartbeatVibrationIntensity(percent: Int) {
+        heartbeatVibrationIntensityPercent = percent.coerceIn(0, 100)
+        saveHeartbeatVibrationSettings()
     }
 
     fun setHeartbeatSoundVolume(percent: Int) {
@@ -639,7 +670,8 @@ class HeartRateService : Service() {
 
     private fun scheduleNextHeartbeat(allowRecentCrest: Boolean = false) {
         cancelHeartbeatSchedule()
-        if (!isHeartbeatSoundEnabled || !heartbeatSoundLoaded || currentBpm <= 0) return
+        val soundReady = isHeartbeatSoundEnabled && heartbeatSoundLoaded
+        if ((!soundReady && !isHeartbeatVibrationEnabled) || currentBpm <= 0) return
 
         val schedulingNowNanos = SystemClock.elapsedRealtimeNanos()
         val scheduledAtNanos = heartbeatSchedulePolicy.deadline(
@@ -651,7 +683,10 @@ class HeartRateService : Service() {
             override fun run() {
                 if (heartbeatSoundRunnable !== this) return
                 heartbeatSoundRunnable = null
-                if (!isHeartbeatSoundEnabled || !heartbeatSoundLoaded || currentBpm <= 0) return
+                if (
+                    ((!isHeartbeatSoundEnabled || !heartbeatSoundLoaded) && !isHeartbeatVibrationEnabled) ||
+                    currentBpm <= 0
+                ) return
 
                 val observedAtNanos = SystemClock.elapsedRealtimeNanos()
                 val periodNanos = pulseClock.periodNanos() ?: return
@@ -662,25 +697,28 @@ class HeartRateService : Service() {
                         periodNanos
                     )
                 ) {
-                    val volume = HeartbeatSoundVolume.scalar(heartbeatSoundVolumePercent)
-                    val streamId = try {
-                        heartbeatSoundPool?.play(
-                            heartbeatSoundSampleId,
-                            volume,
-                            volume,
-                            1,
-                            0,
-                            1.0f
-                        ) ?: 0
-                    } catch (e: Exception) {
-                        log("Heartbeat playback failed: ${e.message}")
-                        0
+                    if (isHeartbeatSoundEnabled && heartbeatSoundLoaded) {
+                        val volume = HeartbeatSoundVolume.scalar(heartbeatSoundVolumePercent)
+                        val streamId = try {
+                            heartbeatSoundPool?.play(
+                                heartbeatSoundSampleId,
+                                volume,
+                                volume,
+                                1,
+                                0,
+                                1.0f
+                            ) ?: 0
+                        } catch (e: Exception) {
+                            log("Heartbeat playback failed: ${e.message}")
+                            0
+                        }
+                        if (streamId == 0) {
+                            failHeartbeatSound("Heartbeat sound playback failed.")
+                        } else {
+                            heartbeatSoundStreamId = streamId
+                        }
                     }
-                    if (streamId == 0) {
-                        failHeartbeatSound("Heartbeat sound playback failed.")
-                        return
-                    }
-                    heartbeatSoundStreamId = streamId
+                    if (isHeartbeatVibrationEnabled) vibrateForHeartbeat()
                 }
 
                 // A late callback is skipped, then the clock is sampled again. This
@@ -697,6 +735,35 @@ class HeartRateService : Service() {
     private fun cancelHeartbeatSchedule() {
         heartbeatSoundRunnable?.let(handler::removeCallbacks)
         heartbeatSoundRunnable = null
+    }
+
+    private fun vibrateForHeartbeat() {
+        if (heartbeatVibrationIntensityPercent <= 0) return
+        try {
+            val deviceVibrator = vibrator ?: getSystemService(VibratorManager::class.java)
+                ?.defaultVibrator
+                ?.also { vibrator = it }
+            if (deviceVibrator?.hasVibrator() == true) {
+                // One palpable pulse: a quick rounded upstroke, a longer soft
+                // decay, then a faint rebound. Keep this compact and let the
+                // shared heartbeat clock supply the rest between beats.
+                val timings = longArrayOf(6, 8, 12, 16, 22, 24, 18, 12, 12, 16, 12)
+                val envelope = intArrayOf(25, 100, 200, 255, 170, 95, 40, 0, 30, 15, 0)
+                val intensity = heartbeatVibrationIntensityPercent.coerceIn(0, 100)
+                val amplitudes = envelope.map { (it * intensity / 100).coerceIn(0, 255) }
+                    .toIntArray()
+                val effect = if (deviceVibrator.hasAmplitudeControl()) {
+                    VibrationEffect.createWaveform(timings, amplitudes, -1)
+                } else {
+                    // Without amplitude control a shaped envelope becomes a
+                    // long full-strength buzz; use a single brief tap instead.
+                    VibrationEffect.createOneShot(35L, VibrationEffect.DEFAULT_AMPLITUDE)
+                }
+                deviceVibrator.vibrate(effect)
+            }
+        } catch (e: Exception) {
+            log("Heartbeat vibration failed: ${e.message}")
+        }
     }
 
     private fun releaseHeartbeatSoundResources() {
@@ -877,6 +944,20 @@ class HeartRateService : Service() {
     private fun loadShowBpmSettings() {
         val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
         isShowBpmEnabled = prefs.getBoolean("show_bpm", true)
+    }
+
+    private fun saveHeartbeatVibrationSettings() {
+        getSharedPreferences("hr_bot_prefs", MODE_PRIVATE).edit()
+            .putBoolean("heartbeat_vibration_enabled", isHeartbeatVibrationEnabled)
+            .putInt("heartbeat_vibration_intensity", heartbeatVibrationIntensityPercent)
+            .apply()
+    }
+
+    private fun loadHeartbeatVibrationSettings() {
+        val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
+        isHeartbeatVibrationEnabled = prefs.getBoolean("heartbeat_vibration_enabled", false)
+        heartbeatVibrationIntensityPercent =
+            prefs.getInt("heartbeat_vibration_intensity", 75).coerceIn(0, 100)
     }
 
     // ── Notification ─────────────────────────────────────────────────
@@ -1260,6 +1341,7 @@ class HeartRateService : Service() {
             // Keep the user's session toggle on through a transient disconnect, but
             // stop playback and release the native sample until BPM returns.
             releaseHeartbeatSoundResources()
+            try { vibrator?.cancel() } catch (_: Exception) {}
         } else if (isHeartbeatSoundEnabled) {
             val timingChanged = sanitizedBpm != previousBpm || phaseCorrection != null
             if (heartbeatSoundPool == null) {
@@ -1267,6 +1349,13 @@ class HeartRateService : Service() {
             } else if (heartbeatSoundLoaded && timingChanged) {
                 scheduleNextHeartbeat(allowRecentCrest = true)
             }
+            if (isHeartbeatVibrationEnabled && !heartbeatSoundLoaded &&
+                (sanitizedBpm != previousBpm || phaseCorrection != null)
+            ) {
+                scheduleNextHeartbeat(allowRecentCrest = true)
+            }
+        } else if (isHeartbeatVibrationEnabled && (sanitizedBpm != previousBpm || phaseCorrection != null)) {
+            scheduleNextHeartbeat(allowRecentCrest = true)
         }
 
         handler.post {

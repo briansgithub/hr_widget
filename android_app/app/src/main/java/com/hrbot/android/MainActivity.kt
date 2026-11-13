@@ -46,6 +46,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var heartbeatSoundVolumeLabel: TextView
     private lateinit var heartbeatSoundVolumeSeekBar: SeekBar
     private lateinit var heartbeatSoundEffectSpinner: Spinner
+    private lateinit var switchHeartbeatVibration: SwitchMaterial
+    private lateinit var heartbeatVibrationIntensityLabel: TextView
+    private lateinit var heartbeatVibrationIntensitySeekBar: SeekBar
     private lateinit var switchFloating: SwitchMaterial
     private lateinit var switchShowBpm: SwitchMaterial
     private lateinit var switchNewThresholds: SwitchMaterial
@@ -176,6 +179,9 @@ class MainActivity : AppCompatActivity() {
         heartbeatSoundVolumeLabel = findViewById(R.id.heartbeatSoundVolumeLabel)
         heartbeatSoundVolumeSeekBar = findViewById(R.id.heartbeatSoundVolumeSeekBar)
         heartbeatSoundEffectSpinner = findViewById(R.id.heartbeatSoundEffectSpinner)
+        switchHeartbeatVibration = findViewById(R.id.switchHeartbeatVibration)
+        heartbeatVibrationIntensityLabel = findViewById(R.id.heartbeatVibrationIntensityLabel)
+        heartbeatVibrationIntensitySeekBar = findViewById(R.id.heartbeatVibrationIntensitySeekBar)
         switchFloating = findViewById(R.id.switchFloating)
         switchShowBpm = findViewById(R.id.switchShowBpm)
         switchNewThresholds = findViewById(R.id.switchNewThresholds)
@@ -379,6 +385,24 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
+        switchHeartbeatVibration.setOnCheckedChangeListener { _, enabled ->
+            heartbeatVibrationIntensitySeekBar.isEnabled = enabled
+            heartbeatVibrationIntensityLabel.isEnabled = enabled
+            if (bound) service?.toggleHeartbeatVibration(enabled)
+        }
+
+        heartbeatVibrationIntensitySeekBar.setOnSeekBarChangeListener(
+            object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    updateHeartbeatVibrationIntensityLabel(progress)
+                    if (fromUser && bound) service?.setHeartbeatVibrationIntensity(progress)
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar?) = Unit
+                override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
+            }
+        )
+
         switchFloating.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked) {
                 if (!checkOverlayPermission()) {
@@ -414,6 +438,15 @@ class MainActivity : AppCompatActivity() {
                 heartbeatSoundVolumeSeekBar.progress = it.heartbeatSoundVolumePercent
             }
             updateHeartbeatSoundVolumeLabel(it.heartbeatSoundVolumePercent)
+            if (switchHeartbeatVibration.isChecked != it.isHeartbeatVibrationEnabled) {
+                switchHeartbeatVibration.isChecked = it.isHeartbeatVibrationEnabled
+            }
+            if (heartbeatVibrationIntensitySeekBar.progress != it.heartbeatVibrationIntensityPercent) {
+                heartbeatVibrationIntensitySeekBar.progress = it.heartbeatVibrationIntensityPercent
+            }
+            heartbeatVibrationIntensitySeekBar.isEnabled = it.isHeartbeatVibrationEnabled
+            heartbeatVibrationIntensityLabel.isEnabled = it.isHeartbeatVibrationEnabled
+            updateHeartbeatVibrationIntensityLabel(it.heartbeatVibrationIntensityPercent)
             syncHeartbeatSoundEffect(it.selectedHeartbeatSoundEffectId)
             if (switchShowBpm.isChecked != it.isShowBpmEnabled) {
                 switchShowBpm.isChecked = it.isShowBpmEnabled
@@ -542,6 +575,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateHeartbeatSoundVolumeLabel(percent: Int) {
         heartbeatSoundVolumeLabel.text = "Heartbeat Volume: $percent%"
+    }
+
+    private fun updateHeartbeatVibrationIntensityLabel(percent: Int) {
+        heartbeatVibrationIntensityLabel.text = "Max vibration intensity: $percent%"
     }
 
     private fun syncHeartbeatSoundEffect(effectId: String) {

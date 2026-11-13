@@ -179,6 +179,43 @@
                 android:contentDescription="Heartbeat sound effect"
                 android:popupBackground="#333333" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Haptics"
+                android:textColor="#888888"
+                android:textSize="12sp"
+                android:textAllCaps="true"
+                android:letterSpacing="0.08"
+                android:layout_marginTop="20dp"
+                android:layout_marginBottom="4dp" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/switchHeartbeatVibration"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Heartbeat Vibration"
+                android:textColor="#FFFFFF"
+                android:layout_marginTop="4dp" />
+
+            <TextView
+                android:id="@+id/heartbeatVibrationIntensityLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Max vibration intensity: 75%"
+                android:textColor="#BBBBBB"
+                android:textSize="14sp"
+                android:layout_marginTop="8dp" />
+
+            <SeekBar
+                android:id="@+id/heartbeatVibrationIntensitySeekBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="75"
+                android:enabled="false"
+                android:contentDescription="Maximum heartbeat vibration intensity" />
+
             <!-- Discord -->
             <TextView
                 android:layout_width="match_parent"
