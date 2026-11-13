@@ -1,4 +1,4 @@
-# Android
+﻿# Android
 .gradle/
 build/
 local.properties
@@ -50,3 +50,5 @@ python_widget/sync_token.txt
 *.log
 *.lnk
 .claude/
+android_app/root_idea_backup/
+
