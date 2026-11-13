@@ -1260,8 +1260,10 @@ class HeartRateWidget:
 
     def _on_discord_toggle(self, *args):
         is_on = self.discord_var.get()
+        if sync_link_ref and _loop_ref and not getattr(self, "_syncing_discord", False):
+            _loop_ref.call_soon_threadsafe(sync_link_ref.set_discord_enabled, is_on)
         self._style_toggle(self.discord_checkbox, is_on, "Discord bot")
-        if is_on:
+        if is_on and not (sync_link_ref and sync_link_ref.role == ROLE_MIRROR):
             if _loop_ref:
                 asyncio.run_coroutine_threadsafe(start_discord_bot(), _loop_ref)
         else:
@@ -1315,6 +1317,12 @@ class HeartRateWidget:
         # we started MIRRORing). Force the next write unconditionally.
         if _bot_ref:
             _bot_ref.last_sent_bpm = -1
+        # The setting is shared, but only the host owns the Discord session.
+        self._syncing_discord = True
+        try:
+            self._on_discord_toggle()
+        finally:
+            self._syncing_discord = False
         if role == ROLE_HOST:
             label = f"Sharing → {peer_name}"
         elif role == ROLE_MIRROR:
@@ -2587,6 +2595,7 @@ sync_link_ref = None
 
 async def start_discord_bot():
     global _bot_ref
+    if sync_link_ref and sync_link_ref.role == ROLE_MIRROR: return
     if _bot_ref and not _bot_ref.is_closed(): return
 
     if DISCORD_TOKEN and DISCORD_TOKEN != "YOUR_BOT_TOKEN_HERE":
@@ -2605,6 +2614,17 @@ def _on_sync_role_change(role, peer_name):
     if _shutdown_initiated:
         return
     app.root.after(0, app.on_sync_role_change, role, peer_name)
+
+def _on_sync_discord(enabled):
+    if _shutdown_initiated:
+        return
+    def apply():
+        app._syncing_discord = True
+        try:
+            app.discord_var.set(enabled)
+        finally:
+            app._syncing_discord = False
+    app.root.after(0, apply)
 
 def _on_sync_status(text):
     if _shutdown_initiated:
@@ -2627,6 +2647,7 @@ async def main_async(app):
         on_role_change=_on_sync_role_change,
         on_status=_on_sync_status,
         on_remote_bpm=_on_sync_remote_bpm,
+        on_discord_change=_on_sync_discord,
     )
     try:
         await asyncio.wait_for(sync_link_ref.start(), timeout=5.0)

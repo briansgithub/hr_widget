@@ -73,8 +73,8 @@ class MainActivity : AppCompatActivity() {
                 // Do not disable the user's toggle for a transient socket close:
                 // the service reconnects automatically. Only reflect a real
                 // configuration failure or an intentional service-side stop.
-                if (service?.isDiscordEnabled == false && switchDiscord.isChecked) {
-                    switchDiscord.isChecked = false
+                if (service != null && switchDiscord.isChecked != service!!.isDiscordEnabled) {
+                    switchDiscord.isChecked = service!!.isDiscordEnabled
                 }
                 refreshManageServersButton()
             }

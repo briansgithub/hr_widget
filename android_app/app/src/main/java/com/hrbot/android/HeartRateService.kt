@@ -288,6 +288,10 @@ class HeartRateService : Service() {
                 // Already delivered on the main thread by SyncLinkManager.
                 val wasMirror = syncRole == SyncLinkManager.ROLE_MIRROR
                 syncRole = role
+                if (isDiscordEnabled) {
+                    if (role == SyncLinkManager.ROLE_MIRROR) disconnectDiscord()
+                    else if (discordSocket == null) connectDiscordGateway()
+                }
                 // A stale lastSentBpm cache could make sendPresenceUpdate() wrongly
                 // believe Discord already shows the right value after regaining HOST
                 // (if the current bpm happens to match whatever we last wrote before
@@ -319,6 +323,10 @@ class HeartRateService : Service() {
                 }
             },
             onStatus = { text -> handler.post { uiCallbacks.forEach { it.onSyncStatusUpdate(text) } } },
+            onDiscordChange = { enabled ->
+                toggleDiscord(enabled, fromPeer = true)
+                uiCallbacks.forEach { it.onDiscordStatusUpdate(if (enabled) "Enabled" else "Offline") }
+            },
             onRemoteBpm = { bpm: Int, phase: Float? ->
                 lastBpmTimestamp = System.currentTimeMillis()
                 updateBpm(bpm, phase)
@@ -484,9 +492,9 @@ class HeartRateService : Service() {
         }
     }
 
-    fun toggleDiscord(enabled: Boolean): Boolean {
+    fun toggleDiscord(enabled: Boolean, fromPeer: Boolean = false): Boolean {
         if (isDiscordEnabled == enabled) return true
-        if (enabled && DISCORD_TOKEN.isEmpty()) {
+        if (enabled && syncRole != SyncLinkManager.ROLE_MIRROR && DISCORD_TOKEN.isEmpty()) {
             isDiscordEnabled = false
             log("Discord bot cannot start: DISCORD_TOKEN is not configured.")
             handler.post {
@@ -495,6 +503,7 @@ class HeartRateService : Service() {
             return false
         }
         isDiscordEnabled = enabled
+        if (!fromPeer) syncLink?.setDiscordEnabled(enabled)
         if (enabled) {
             if (discordSocket == null) {
                 connectDiscordGateway()
@@ -1375,7 +1384,7 @@ class HeartRateService : Service() {
     // ══════════════════════════════════════════════════════════════════
 
     private fun connectDiscordGateway() {
-        if (!isDiscordEnabled) return
+        if (!isDiscordEnabled || syncRole == SyncLinkManager.ROLE_MIRROR) return
         log("Connecting to Discord Gateway...")
         handler.post { uiCallbacks.forEach { it.onDiscordStatusUpdate("Connecting...") } }
 

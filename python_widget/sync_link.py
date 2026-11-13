@@ -88,7 +88,7 @@ class SyncLink:
     """
 
     def __init__(self, device_name, token, port=DEFAULT_PORT,
-                 on_role_change=None, on_remote_bpm=None, on_status=None):
+                 on_role_change=None, on_remote_bpm=None, on_status=None, on_discord_change=None):
         self.device_name = device_name
         self.token = token
         self.port = port
@@ -98,6 +98,10 @@ class SyncLink:
         self.on_remote_bpm = on_remote_bpm or (lambda bpm, phase: None)
         # on_status(text) -- human-readable status for the UI ("Linking...", "No device found", ...)
         self.on_status = on_status or (lambda text: None)
+
+        self.on_discord_change = on_discord_change or (lambda enabled: None)
+        self.discord_enabled = False
+        self.discord_revision = (0, "")
 
         self.role = ROLE_UNLINKED
         self.peer_name = None
@@ -118,6 +122,27 @@ class SyncLink:
         self._ws = None  # the single active peer connection (either accepted or dialed)
         self._link_lock = asyncio.Lock()
         self._link_task = None
+
+    def discord_setting(self):
+        return {"enabled": self.discord_enabled, "revision": self.discord_revision[0],
+                "source": self.discord_revision[1]}
+
+    def set_discord_enabled(self, enabled):
+        self.discord_enabled = bool(enabled)
+        self.discord_revision = (max(int(time.time() * 1000), self.discord_revision[0] + 1), self.device_name)
+        if self._ws is not None:
+            asyncio.ensure_future(self._send(self._ws, {"type": "discord_setting", **self.discord_setting()}))
+
+    def receive_discord_setting(self, setting):
+        if not isinstance(setting, dict) or not isinstance(setting.get("enabled"), bool):
+            return
+        revision, source = setting.get("revision"), setting.get("source")
+        if type(revision) is not int or revision < 0 or not isinstance(source, str):
+            return
+        if (revision, source) > self.discord_revision:
+            self.discord_revision = (revision, source)
+            self.discord_enabled = setting["enabled"]
+            self.on_discord_change(self.discord_enabled)
 
     # --- lifecycle -----------------------------------------------------
 
@@ -288,6 +313,7 @@ class SyncLink:
         try:
             await self._send(ws, {
                 "type": "hello",
+                "discord_setting": self.discord_setting(),
                 "device": self.device_name,
                 "fitbit_connected": self._fitbit_connected,
                 "connected_since": self._connected_since,
@@ -310,6 +336,7 @@ class SyncLink:
 
         self.peer_name = remote.get("device", "peer")
         self._negotiate_role(remote)
+        self.receive_discord_setting(remote.get("discord_setting"))
 
         # Listen for further messages (hr/status/bye) for the life of the link.
         asyncio.ensure_future(self._recv_loop(ws))
@@ -388,7 +415,9 @@ class SyncLink:
                 self.last_peer_activity_at = time.time()
 
                 mtype = msg.get("type")
-                if mtype == "hr" and self.role == ROLE_MIRROR:
+                if mtype == "discord_setting":
+                    self.receive_discord_setting(msg)
+                elif mtype == "hr" and self.role == ROLE_MIRROR:
                     _dbg(f"_recv_loop: got relayed bpm={msg.get('bpm', 0)} phase={msg.get('phase')}")
                     self.last_bpm_received_at = time.time()
                     self.on_remote_bpm(msg.get("bpm", 0), msg.get("phase"))

@@ -36,7 +36,8 @@ class SyncLinkManager(
     private val port: Int = 8765,
     private val onRoleChange: (role: String, peerName: String?) -> Unit,
     private val onStatus: (text: String) -> Unit,
-    private val onRemoteBpm: (bpm: Int, phase: Float?) -> Unit
+    private val onRemoteBpm: (bpm: Int, phase: Float?) -> Unit,
+    private val onDiscordChange: (Boolean) -> Unit = {}
 ) {
     companion object {
         private const val TAG = "SyncLink"
@@ -88,6 +89,36 @@ class SyncLinkManager(
     private fun scheduleReconnect() {
         handler.removeCallbacks(reconnectRunnable)
         if (reconnectEnabled && !stopped) handler.postDelayed(reconnectRunnable, 2000)
+    }
+
+    private var discordEnabled = false
+    private var discordRevision = 0L
+    private var discordSource = ""
+
+    private fun discordSetting() = JSONObject().apply {
+        put("enabled", discordEnabled)
+        put("revision", discordRevision)
+        put("source", discordSource)
+    }
+
+    fun setDiscordEnabled(enabled: Boolean) {
+        discordEnabled = enabled
+        discordRevision = maxOf(System.currentTimeMillis(), discordRevision + 1)
+        discordSource = deviceName
+        if (authenticated) sendJson(discordSetting().put("type", "discord_setting"))
+    }
+
+    private fun receiveDiscordSetting(setting: JSONObject?) {
+        if (setting == null || setting.opt("enabled") !is Boolean ||
+            setting.opt("revision") !is Number || setting.opt("source") !is String) return
+        val revision = setting.optLong("revision")
+        val source = setting.optString("source")
+        if (revision > discordRevision || (revision == discordRevision && source > discordSource)) {
+            discordRevision = revision
+            discordSource = source
+            discordEnabled = setting.getBoolean("enabled")
+            onDiscordChange(discordEnabled)
+        }
     }
 
     private var server: HrSyncServer? = null
@@ -404,6 +435,7 @@ class SyncLinkManager(
 
     private fun helloMessage() = JSONObject().apply {
         put("type", "hello")
+        put("discord_setting", discordSetting())
         put("device", deviceName)
         put("fitbit_connected", fitbitConnected)
         put("connected_since", connectedSince ?: JSONObject.NULL)
@@ -448,7 +480,9 @@ class SyncLinkManager(
                 setReconnectEnabled(true)
                 finishDiscovery()
                 negotiateRole(msg)
+                handler.post { receiveDiscordSetting(msg.optJSONObject("discord_setting")) }
             }
+            "discord_setting" -> receiveDiscordSetting(msg)
             "status" -> negotiateRole(msg)
             "ping" -> sendJson(JSONObject().apply { put("type", "pong") })
             "pong" -> { /* Link is alive */ }

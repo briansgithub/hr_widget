@@ -98,5 +98,38 @@ class LinkDisconnectTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(link._ws)
 
 
+class DiscordSettingTests(unittest.TestCase):
+    def test_both_directions_and_stale_reconnect_state(self):
+        changes = []
+        pc = SyncLink("pc", "token")
+        phone = SyncLink("phone", "token", on_discord_change=changes.append)
+        pc.set_discord_enabled(True)
+        phone.receive_discord_setting(pc.discord_setting())
+        self.assertEqual(changes, [True])
+        old = pc.discord_setting()
+        phone.set_discord_enabled(False)
+        pc.receive_discord_setting(phone.discord_setting())
+        self.assertFalse(pc.discord_enabled)
+        phone.receive_discord_setting(old)
+        self.assertFalse(phone.discord_enabled)
+        self.assertEqual(changes, [True])  # No echo or stale callback.
+
+    def test_equal_timestamp_has_deterministic_tiebreak(self):
+        pc = SyncLink("pc", "token")
+        phone = SyncLink("phone", "token")
+        a = {"enabled": True, "revision": 10, "source": "pc"}
+        b = {"enabled": False, "revision": 10, "source": "phone"}
+        for peer, order in ((pc, (a, b)), (phone, (b, a))):
+            for update in order:
+                peer.receive_discord_setting(update)
+        self.assertEqual(pc.discord_setting(), phone.discord_setting())
+
+    def test_invalid_settings_are_ignored(self):
+        peer = SyncLink("pc", "token")
+        for setting in (None, {}, {"enabled": "false", "revision": 1, "source": "phone"}):
+            peer.receive_discord_setting(setting)
+        self.assertFalse(peer.discord_enabled)
+
+
 if __name__ == "__main__":
     unittest.main()
