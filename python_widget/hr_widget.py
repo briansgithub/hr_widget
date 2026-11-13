@@ -2483,6 +2483,11 @@ async def scan_and_connect(app):
                     next_watch = connected_at + 15.0
                     while client.is_connected:
                         await asyncio.sleep(1)
+                        if sync_link_ref and sync_link_ref.role == ROLE_MIRROR:
+                            # Release the old local GATT when the peer wins host
+                            # ownership; ignoring its readings alone retains BLE.
+                            drop_reason = "role-mirror"
+                            break
                         # #region agent log
                         now_m = time.perf_counter()
                         if now_m >= next_watch:

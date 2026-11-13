@@ -427,7 +427,7 @@ class SyncLink:
         ws, self._ws = self._ws, None
         if ws is not None:
             try:
-                await self._send(ws, {"type": "bye"})
+                await self._send(ws, {"type": "bye", "reason": reason})
                 await ws.close()
             except Exception:
                 pass

@@ -277,6 +277,7 @@ class HeartRateService : Service() {
             token = loadSyncToken(),
             onRoleChange = { role, peerName ->
                 // Already delivered on the main thread by SyncLinkManager.
+                val wasMirror = syncRole == SyncLinkManager.ROLE_MIRROR
                 syncRole = role
                 // A stale lastSentBpm cache could make sendPresenceUpdate() wrongly
                 // believe Discord already shows the right value after regaining HOST
@@ -286,6 +287,7 @@ class HeartRateService : Service() {
                 uiCallbacks.forEach { it.onSyncRoleChange(role, peerName) }
 
                 if (role == SyncLinkManager.ROLE_MIRROR) {
+                    ensureTrackingInfrastructure()
                     stopScan()
                     gatt?.let { activeGatt ->
                         try { activeGatt.disconnect() } catch (_: Exception) {}
@@ -293,6 +295,12 @@ class HeartRateService : Service() {
                         if (gatt === activeGatt) gatt = null
                         syncLink?.notifyFitbitState(false)
                         updateBpm(0)
+                    }
+                } else if (wasMirror && gatt == null) {
+                    updateBpm(0)
+                    stopStalenessMonitorIfIdle()
+                    if (!trackingRequested && !isHeartbeatSoundEnabled && wakeLock?.isHeld == true) {
+                        wakeLock?.release()
                     }
                 }
 
@@ -312,6 +320,8 @@ class HeartRateService : Service() {
     }
 
     fun requestSyncLink() = syncLink?.requestLink()
+    val isSyncLinked: Boolean get() = syncLink?.isLinked == true
+    val syncPeerName: String? get() = syncLink?.linkedPeerName
     fun connectManualSyncLink(host: String) = syncLink?.connectManual(host)
     fun disconnectSyncLink() = syncLink?.disconnect()
 
@@ -373,8 +383,8 @@ class HeartRateService : Service() {
         when {
             isHeartbeatSoundEnabled ->
                 log("App swiped away. Heartbeat sound remains active.")
-            syncRole == SyncLinkManager.ROLE_MIRROR ->
-                log("App swiped away. Mirror link remains active.")
+            syncRole != SyncLinkManager.ROLE_UNLINKED ->
+                log("App swiped away. Device link remains active.")
             else -> {
                 log("App swiped away while idle. Shutting down service...")
                 stopSelf()
@@ -405,7 +415,7 @@ class HeartRateService : Service() {
     }
 
     private fun stopStalenessMonitorIfIdle() {
-        if (!trackingRequested && !isHeartbeatSoundEnabled) {
+        if (!trackingRequested && !isHeartbeatSoundEnabled && syncRole != SyncLinkManager.ROLE_MIRROR) {
             handler.removeCallbacks(stalenessRunnable)
         }
     }

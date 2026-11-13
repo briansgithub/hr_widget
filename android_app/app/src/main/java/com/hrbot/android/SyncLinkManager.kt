@@ -66,10 +66,29 @@ class SyncLinkManager(
 
     var role: String = ROLE_UNLINKED
         private set
+    val isLinked: Boolean get() = authenticated
+    val linkedPeerName: String? get() = peerName
     private var peerName: String? = null
 
     private var fitbitConnected = false
     private var connectedSince: Long? = null
+    private var remoteState: JSONObject? = null
+    private var authenticated = false
+    private val prefs = context.getSharedPreferences("hr_bot_prefs", Context.MODE_PRIVATE)
+    private var reconnectEnabled = prefs.getBoolean("sync_link_requested", false)
+    private var stopped = false
+    private val reconnectRunnable = Runnable { requestLink() }
+
+    private fun setReconnectEnabled(enabled: Boolean) {
+        reconnectEnabled = enabled
+        prefs.edit().putBoolean("sync_link_requested", enabled).apply()
+        handler.removeCallbacks(reconnectRunnable)
+    }
+
+    private fun scheduleReconnect() {
+        handler.removeCallbacks(reconnectRunnable)
+        if (reconnectEnabled && !stopped) handler.postDelayed(reconnectRunnable, 2000)
+    }
 
     private var server: HrSyncServer? = null
     private var clientSocket: WebSocket? = null    // active outbound (we dialed the peer)
@@ -112,15 +131,19 @@ class SyncLinkManager(
     }
 
     fun start() {
-        dbg("start() deviceName=$deviceName port=$port token=$token")
+        stopped = false
+        dbg("start() deviceName=$deviceName port=$port")
         server = HrSyncServer(InetSocketAddress(port)).also { it.start() }
         dbg("WebSocket server listening on port $port")
         registerService()
+        scheduleReconnect()
     }
 
     fun stop() {
         dbg("stop() called")
-        stopDiscoverySafely()
+        stopped = true
+        handler.removeCallbacks(reconnectRunnable)
+        finishDiscovery()
         onPeerLost("shutting down", closeSockets = true)
         unregisterService()
         try { server?.stop(1000) } catch (_: Exception) {}
@@ -137,10 +160,11 @@ class SyncLinkManager(
     fun notifyFitbitState(connected: Boolean) {
         dbg("notifyFitbitState(connected=$connected) role=$role")
         fitbitConnected = connected
-        connectedSince = if (connected) System.currentTimeMillis() / 1000 else null
+        connectedSince = if (connected) connectedSince ?: (System.currentTimeMillis() / 1000) else null
         if (clientSocket != null || serverPeerConn != null) {
             sendJson(statusMessage())
         }
+        remoteState?.let { negotiateRole(it) }
         if (!connected && role == ROLE_HOST) {
             handler.post { onRemoteBpm(0, null) }
         }
@@ -161,6 +185,8 @@ class SyncLinkManager(
     // ── Linking ──────────────────────────────────────────────────────
 
     fun requestLink() {
+        if (stopped) return
+        setReconnectEnabled(true)
         if (clientSocket != null || serverPeerConn != null) {
             onStatus("Already linked to $peerName")
             return
@@ -175,27 +201,37 @@ class SyncLinkManager(
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(regType: String) {}
             override fun onServiceFound(service: NsdServiceInfo) {
-                dbg("onServiceFound: ${service.serviceName}")
-                if (resolved || service.serviceName == registeredServiceName) return
-                nsdManager.resolveService(service, object : NsdManager.ResolveListener {
+                val discovery = this
+                handler.post found@{
+                    if (resolved || discoveryListener !== discovery ||
+                        service.serviceName == registeredServiceName) return@found
+                    nsdManager.resolveService(service, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(si: NsdServiceInfo, errorCode: Int) {
                         Log.w(TAG, "Resolve failed for ${si.serviceName}: $errorCode")
                     }
                     override fun onServiceResolved(si: NsdServiceInfo) {
-                        if (resolved) return
-                        val host = si.host?.hostAddress ?: return
-                        dbg("onServiceResolved: ${si.serviceName} -> $host:${si.port}")
-                        resolved = true
-                        finishDiscovery()
-                        connectClient(host, si.port)
+                        handler.post resolved@{
+                            if (resolved || discoveryListener !== discovery || stopped) return@resolved
+                            val host = si.host?.hostAddress ?: return@resolved
+                            resolved = true
+                            finishDiscovery()
+                            connectClient(host, si.port)
+                        }
                     }
-                })
+                    })
+                }
             }
             override fun onServiceLost(service: NsdServiceInfo) {}
             override fun onDiscoveryStopped(serviceType: String) {}
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                onStatus("Discovery failed ($errorCode)")
-                finishDiscovery()
+                val discovery = this
+                handler.post {
+                    if (discoveryListener === discovery) {
+                        onStatus("Discovery failed ($errorCode)")
+                        finishDiscovery()
+                        scheduleReconnect()
+                    }
+                }
             }
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
         }
@@ -204,8 +240,8 @@ class SyncLinkManager(
             nsdManager.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
         } catch (e: Exception) {
             onStatus("Discovery failed to start: ${e.message}")
-            linking = false
-            discoveryListener = null
+            finishDiscovery()
+            scheduleReconnect()
             return
         }
 
@@ -213,6 +249,7 @@ class SyncLinkManager(
             if (!resolved) {
                 onStatus("No device found on your network")
                 finishDiscovery()
+                scheduleReconnect()
             }
         }
         linkTimeoutRunnable = timeout
@@ -220,6 +257,7 @@ class SyncLinkManager(
     }
 
     fun connectManual(host: String) {
+        setReconnectEnabled(true)
         if (clientSocket != null || serverPeerConn != null) {
             onStatus("Already linked to $peerName")
             return
@@ -229,9 +267,10 @@ class SyncLinkManager(
     }
 
     fun disconnect() {
-        try { clientSocket?.close(1000, "user disconnected") } catch (_: Exception) {}
-        try { serverPeerConn?.close(1000, "user disconnected") } catch (_: Exception) {}
-        onPeerLost("user disconnected", closeSockets = false)
+        setReconnectEnabled(false)
+        finishDiscovery()
+        sendJson(JSONObject().apply { put("type", "bye"); put("reason", "user disconnected") })
+        onPeerLost("user disconnected", closeSockets = true)
     }
 
     private fun finishDiscovery() {
@@ -291,28 +330,33 @@ class SyncLinkManager(
         val request = Request.Builder().url("ws://$host:$remotePort").build()
         val socket = httpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                val hello = helloMessage().toString()
-                dbg("client onOpen: sending $hello")
-                webSocket.send(hello)
+                handler.post {
+                    if (clientSocket !== webSocket) return@post
+                    webSocket.send(helloMessage().toString())
+                    startPeerHeartbeat()
+                }
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleIncomingMessage(text)
+                handler.post {
+                    if (clientSocket === webSocket) handleIncomingMessage(text)
+                }
+            }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(code, reason)
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                if (clientSocket === webSocket) {
-                    clientSocket = null
-                    onPeerLost("link lost", closeSockets = false)
+                handler.post {
+                    if (clientSocket === webSocket) {
+                        if (reason == "user disconnected") setReconnectEnabled(false)
+                        onPeerLost("link lost", closeSockets = false)
+                    }
                 }
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                val ip = webSocket.request().url.host
-                val port = webSocket.request().url.port
-                val errorMsg = "Couldn't connect to $ip:$port: ${t.message}"
-                onStatus(errorMsg)
-                dbg(errorMsg)
-                if (clientSocket === webSocket) {
-                    clientSocket = null
-                    onPeerLost("connect failed", closeSockets = false)
+                handler.post {
+                    if (clientSocket === webSocket) {
+                        onPeerLost("connect failed", closeSockets = false)
+                    }
                 }
             }
         })
@@ -323,27 +367,29 @@ class SyncLinkManager(
 
     private inner class HrSyncServer(address: InetSocketAddress) : WebSocketServer(address) {
         override fun onOpen(conn: JWebSocket, handshake: ClientHandshake) {
-            dbg("server onOpen: incoming connection from ${conn.remoteSocketAddress}")
-            if (clientSocket != null || serverPeerConn != null) {
-                dbg("server onOpen: rejecting, already linked")
-                conn.close(1013, "busy")
-                return
+            handler.post {
+                if (stopped || clientSocket != null || serverPeerConn != null) {
+                    conn.close(1013, "busy")
+                    return@post
+                }
+                serverPeerConn = conn
+                conn.send(helloMessage().toString())
+                startPeerHeartbeat()
             }
-            serverPeerConn = conn
-            val hello = helloMessage().toString()
-            dbg("server onOpen: sending $hello")
-            conn.send(hello)
         }
 
         override fun onMessage(conn: JWebSocket, message: String) {
-            dbg("server onMessage: $message")
-            if (serverPeerConn === conn) handleIncomingMessage(message)
+            handler.post {
+                if (serverPeerConn === conn) handleIncomingMessage(message)
+            }
         }
 
         override fun onClose(conn: JWebSocket, code: Int, reason: String, remote: Boolean) {
-            if (serverPeerConn === conn) {
-                serverPeerConn = null
-                onPeerLost("link lost", closeSockets = false)
+            handler.post {
+                if (serverPeerConn === conn) {
+                    if (reason == "user disconnected") setReconnectEnabled(false)
+                    onPeerLost("link lost", closeSockets = false)
+                }
             }
         }
 
@@ -376,8 +422,15 @@ class SyncLinkManager(
         serverPeerConn?.let { if (it.isOpen) it.send(text) }
     }
 
+    private fun startPeerHeartbeat() {
+        lastPeerActivityAt = System.currentTimeMillis()
+        handler.removeCallbacks(heartbeatRunnable)
+        handler.postDelayed(heartbeatRunnable, 2000)
+    }
+
     private fun handleIncomingMessage(raw: String) {
         val msg = try { JSONObject(raw) } catch (e: Exception) { return }
+        if (!authenticated && msg.optString("type") != "hello") return
         
         lastPeerActivityAt = System.currentTimeMillis()
         
@@ -385,13 +438,16 @@ class SyncLinkManager(
         when (msg.optString("type")) {
             "hello" -> {
                 if (msg.optString("token") != token) {
+                    setReconnectEnabled(false)
                     onStatus("Link rejected: pairing token mismatch")
                     onPeerLost("token mismatch", closeSockets = true)
                     return
                 }
                 peerName = msg.optString("device", "peer")
+                authenticated = true
+                setReconnectEnabled(true)
+                finishDiscovery()
                 negotiateRole(msg)
-                handler.post(heartbeatRunnable)
             }
             "status" -> negotiateRole(msg)
             "ping" -> sendJson(JSONObject().apply { put("type", "pong") })
@@ -401,11 +457,15 @@ class SyncLinkManager(
                 val phase = if (msg.has("phase")) msg.optDouble("phase").toFloat() else null
                 handler.post { onRemoteBpm(bpm, phase) }
             }
-            "bye" -> onPeerLost("peer disconnected", closeSockets = false)
+            "bye" -> {
+                if (msg.optString("reason") == "user disconnected") setReconnectEnabled(false)
+                onPeerLost("peer disconnected", closeSockets = true)
+            }
         }
     }
 
     private fun negotiateRole(msg: JSONObject) {
+        remoteState = msg
         val remoteConnected = msg.optBoolean("fitbit_connected", false)
         val remoteSince = if (msg.isNull("connected_since")) null else msg.optLong("connected_since")
 
@@ -422,7 +482,9 @@ class SyncLinkManager(
 
         dbg("negotiateRole: mine(connected=$fitbitConnected, since=$connectedSince) " +
             "remote(connected=$remoteConnected, since=$remoteSince) -> $role")
-        handler.post { onRoleChange(role, peerName) }
+        val negotiatedRole = role
+        val negotiatedPeer = peerName
+        handler.post { onRoleChange(negotiatedRole, negotiatedPeer) }
         onStatus(
             when (role) {
                 ROLE_HOST -> "Sharing HR with $peerName"
@@ -434,6 +496,9 @@ class SyncLinkManager(
 
     private fun onPeerLost(reason: String, closeSockets: Boolean) {
         dbg("onPeerLost(reason=$reason, closeSockets=$closeSockets)")
+        handler.removeCallbacks(heartbeatRunnable)
+        authenticated = false
+        remoteState = null
         if (closeSockets) {
             try { clientSocket?.close(1000, reason) } catch (_: Exception) {}
             try { serverPeerConn?.close(1000, reason) } catch (_: Exception) {}
@@ -447,5 +512,6 @@ class SyncLinkManager(
             onRoleChange(ROLE_UNLINKED, null)
             onStatus("Not linked ($reason)")
         }
+        scheduleReconnect()
     }
 }

@@ -820,6 +820,13 @@ class ClevoIpcBackend(KeyboardLightingBackend):
             process.kill()
             await process.wait()
             raise BackendUnavailableError("The broker read-only probe timed out.") from None
+        except asyncio.CancelledError:
+            # The controller can expire a health check before this probe's own
+            # timeout. Reap only our read-only child before releasing its slot.
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+            raise
         if len(stdout) > JsonLineProtocol.MAX_LINE_BYTES or not stdout:
             raise ProtocolValidationError("The broker probe response was empty or oversized.")
         try:
@@ -2266,7 +2273,10 @@ class KeyboardSyncController:
         try:
             result = await self._await_backend_deadline(
                 self._backend.verify_oem_health(lease_id),
-                self._apply_timeout,
+                # Health verification launches a read-only probe process. Give
+                # it the probe budget rather than the shorter native-write ACK
+                # budget, which can expire on an ordinary process-start delay.
+                self._probe_timeout,
             )
         except asyncio.CancelledError:
             raise
@@ -2429,6 +2439,12 @@ class KeyboardSyncController:
         self._idle_event.set()
 
     def _quarantine_unlocked(self, code: str, message: str) -> None:
+        _agent_log(
+            "keyboard_sync.py:_quarantine_unlocked",
+            "keyboard sync fault",
+            {"code": code, "message": message},
+            "D",
+        )
         self._fault = ControllerFault(code=code, message=message, unknown_outcome=True)
         self._idle_event.clear()
         if self._state is not KeyboardSyncState.QUARANTINED:

@@ -3,6 +3,7 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 from keyboard_sync import (
     ApplyAck,
@@ -62,6 +63,41 @@ def snapshot_for_target(target):
 
 
 class KeyboardSyncControllerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_health_probe_uses_probe_budget_instead_of_write_budget(self) -> None:
+        class SlowHealthBackend(FakeBackend):
+            async def verify_oem_health(self, lease_id):
+                await asyncio.sleep(0.03)
+                return await super().verify_oem_health(lease_id)
+
+        controller = KeyboardSyncController(
+            SlowHealthBackend(), apply_timeout=0.01, probe_timeout=0.2
+        )
+        self.assertTrue(await controller.enable())
+        self.assertTrue(await controller.disable())
+
+    async def test_cancelled_read_only_probe_reaps_its_process(self) -> None:
+        started = asyncio.Event()
+
+        async def communicate():
+            started.set()
+            await asyncio.Event().wait()
+
+        process = AsyncMock()
+        process.returncode = None
+        process.communicate.side_effect = communicate
+        process.kill = Mock()
+        backend = ClevoIpcBackend(enable_real_broker=True)
+        with patch("keyboard_sync.shutil.which", return_value="broker.exe"), patch(
+            "keyboard_sync.asyncio.create_subprocess_exec", return_value=process
+        ):
+            probe = asyncio.create_task(backend._run_probe_process())
+            await asyncio.wait_for(started.wait(), timeout=1)
+            probe.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await probe
+        process.kill.assert_called_once()
+        process.wait.assert_awaited_once()
+
     async def test_default_is_oem_only_and_hardware_free(self) -> None:
         backend = FakeBackend()
         controller = KeyboardSyncController(backend)
@@ -685,6 +721,7 @@ class KeyboardSyncControllerTests(unittest.IsolatedAsyncioTestCase):
         controller = KeyboardSyncController(
             backend,
             apply_timeout=0.01,
+            probe_timeout=0.1,
             health_sleeper=tick.sleep,
         )
         self.assertTrue(await controller.enable())

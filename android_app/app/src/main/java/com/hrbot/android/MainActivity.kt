@@ -90,7 +90,7 @@ class MainActivity : AppCompatActivity() {
                 btnLinkDevice.text = when (role) {
                     SyncLinkManager.ROLE_HOST -> "Sharing -> $peerName"
                     SyncLinkManager.ROLE_MIRROR -> "Mirror <- $peerName"
-                    else -> "Link Device"
+                    else -> if (peerName != null) "Linked to $peerName" else "Link Device"
                 }
             }
         }
@@ -240,7 +240,7 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Service not ready", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            if (svc.syncRole == SyncLinkManager.ROLE_UNLINKED) {
+            if (!svc.isSyncLinked) {
                 svc.requestSyncLink()
             } else {
                 svc.disconnectSyncLink()
@@ -249,7 +249,7 @@ class MainActivity : AppCompatActivity() {
 
         btnLinkDevice.setOnLongClickListener {
             val svc = service ?: return@setOnLongClickListener false
-            if (svc.syncRole != SyncLinkManager.ROLE_UNLINKED) return@setOnLongClickListener false
+            if (svc.isSyncLinked) return@setOnLongClickListener false
 
             val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
             val lastIp = prefs.getString("last_sync_ip", "")
@@ -400,6 +400,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncUiFromService() {
         service?.let {
+            uiCallback.onSyncRoleChange(it.syncRole, it.syncPeerName)
             if (switchDiscord.isChecked != it.isDiscordEnabled) {
                 switchDiscord.isChecked = it.isDiscordEnabled
             }

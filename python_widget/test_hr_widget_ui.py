@@ -502,6 +502,7 @@ class KeyboardSyncUiTests(unittest.TestCase):
             return future
 
         widget.current_bpm = 60
+        widget.status_text = ""
         widget.pulse_phase = -hr_widget_module.math.pi / 2
         widget._keyboard_sync_desired = True
         widget._keyboard_sync_generation = 4
@@ -509,7 +510,9 @@ class KeyboardSyncUiTests(unittest.TestCase):
         widget._keyboard_brightness_request_future = None
         widget._last_requested_keyboard_brightness = None
         widget._last_keyboard_brightness_request_time = float("-inf")
-        widget.keyboard_sync = SimpleNamespace(enabled=True)
+        widget.keyboard_sync = SimpleNamespace(
+            enabled=True, state=hr_widget_module.KeyboardSyncState.ACTIVE_IDLE
+        )
         widget._submit_keyboard_sync = submit
 
         widget._request_current_keyboard_brightness(1.0)

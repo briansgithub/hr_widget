@@ -1,4 +1,6 @@
 import unittest
+import json
+from unittest.mock import AsyncMock
 
 from sync_link import ROLE_HOST, ROLE_MIRROR, ROLE_UNLINKED, SyncLink
 
@@ -72,6 +74,28 @@ class MirrorStalenessTests(unittest.TestCase):
         self.assertEqual(link.role, ROLE_MIRROR)
         self.assertGreaterEqual(link.mirror_since, first)
         self.assertFalse(link.mirror_is_stale(now=link.mirror_since))
+
+
+class LinkDisconnectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_user_disconnect_preserves_local_fitbit_and_identifies_intent(self):
+        link = SyncLink("desktop", "token")
+        link._fitbit_connected = True
+        link._connected_since = 1000.0
+        link.peer_name = "phone"
+        link.role = ROLE_HOST
+        socket = AsyncMock()
+        link._ws = socket
+
+        await link.disconnect()
+
+        self.assertEqual(json.loads(socket.send.call_args.args[0]), {
+            "type": "bye", "reason": "user disconnected"
+        })
+        socket.close.assert_awaited_once()
+        self.assertTrue(link._fitbit_connected)
+        self.assertEqual(link._connected_since, 1000.0)
+        self.assertEqual(link.role, ROLE_UNLINKED)
+        self.assertIsNone(link._ws)
 
 
 if __name__ == "__main__":
