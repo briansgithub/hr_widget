@@ -1,6 +1,7 @@
 package com.hrbot.android
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
@@ -79,6 +80,10 @@ class FloatingWidgetManager(private val context: Context) {
         params.x = 100
         params.y = 100
 
+        val detector = TapDragDetector(
+            slopPx = ViewConfiguration.get(context).scaledTouchSlop.toFloat(),
+            maxTapDurationMs = ViewConfiguration.getLongPressTimeout().toLong()
+        )
         floatingView?.setOnTouchListener(object : View.OnTouchListener {
             private var initialX = 0
             private var initialY = 0
@@ -92,12 +97,27 @@ class FloatingWidgetManager(private val context: Context) {
                         initialY = params.y
                         initialTouchX = event.rawX
                         initialTouchY = event.rawY
+                        detector.onDown(event.rawX, event.rawY, event.eventTime)
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        params.x = initialX + (event.rawX - initialTouchX).toInt()
-                        params.y = initialY + (event.rawY - initialTouchY).toInt()
-                        windowManager?.updateViewLayout(floatingView, params)
+                        if (detector.onMove(event.rawX, event.rawY)) {
+                            params.x = initialX + (event.rawX - initialTouchX).toInt()
+                            params.y = initialY + (event.rawY - initialTouchY).toInt()
+                            try {
+                                windowManager?.updateViewLayout(floatingView, params)
+                            } catch (e: Exception) {
+                                Log.w("FloatingWidget", "updateViewLayout failed", e)
+                            }
+                        }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (detector.onUp(event.eventTime)) openApp()
+                        return true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        detector.onCancel()
                         return true
                     }
                 }
@@ -122,6 +142,18 @@ class FloatingWidgetManager(private val context: Context) {
             }
         } catch (e: Exception) {
             isVisible = false
+        }
+    }
+
+    /** Brings the app to the foreground (existing task if there is one, else a new one). */
+    private fun openApp() {
+        try {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w("FloatingWidget", "Could not open app from widget tap", e)
         }
     }
 

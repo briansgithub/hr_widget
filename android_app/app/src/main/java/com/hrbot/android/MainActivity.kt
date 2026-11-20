@@ -146,7 +146,9 @@ class MainActivity : AppCompatActivity() {
             service = localBinder.getService()
             bound = true
             service?.addCallback(uiCallback)
+            service?.retryFloatingIfPermitted()
             syncUiFromService()
+            maybePromptForOverlayPermission()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -155,6 +157,23 @@ class MainActivity : AppCompatActivity() {
             bound = false
         }
     }
+
+    private val floatingSwitchListener =
+        android.widget.CompoundButton.OnCheckedChangeListener { _, isChecked ->
+            if (isChecked) {
+                if (!checkOverlayPermission()) {
+                    switchFloating.isChecked = false
+                    requestOverlayPermission()
+                    Toast.makeText(this, "Please grant overlay permission", Toast.LENGTH_SHORT).show()
+                    return@OnCheckedChangeListener
+                }
+            }
+            if (bound) {
+                service?.toggleFloating(isChecked)
+            } else {
+                Toast.makeText(this, "Service not ready", Toast.LENGTH_SHORT).show()
+            }
+        }
 
     // ── Lifecycle ────────────────────────────────────────────────────
 
@@ -403,21 +422,7 @@ class MainActivity : AppCompatActivity() {
             }
         )
 
-        switchFloating.setOnCheckedChangeListener { _, isChecked ->
-            if (isChecked) {
-                if (!checkOverlayPermission()) {
-                    switchFloating.isChecked = false
-                    requestOverlayPermission()
-                    Toast.makeText(this, "Please grant overlay permission", Toast.LENGTH_SHORT).show()
-                    return@setOnCheckedChangeListener
-                }
-            }
-            if (bound) {
-                service?.toggleFloating(isChecked)
-            } else {
-                Toast.makeText(this, "Service not ready", Toast.LENGTH_SHORT).show()
-            }
-        }
+        switchFloating.setOnCheckedChangeListener(floatingSwitchListener)
 
         requestPermissions()
     }
@@ -429,7 +434,10 @@ class MainActivity : AppCompatActivity() {
                 switchDiscord.isChecked = it.isDiscordEnabled
             }
             if (switchFloating.isChecked != it.isFloatingEnabled) {
+                // Programmatic sync: must not run the permission/toggle listener.
+                switchFloating.setOnCheckedChangeListener(null)
                 switchFloating.isChecked = it.isFloatingEnabled
+                switchFloating.setOnCheckedChangeListener(floatingSwitchListener)
             }
             if (switchHeartbeatSound.isChecked != it.isHeartbeatSoundEnabled) {
                 switchHeartbeatSound.isChecked = it.isHeartbeatSoundEnabled
@@ -478,7 +486,10 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         if (bound) {
             service?.addCallback(uiCallback)
+            // Back from the overlay-permission screen: show the widget if it was waiting on it.
+            service?.retryFloatingIfPermitted()
             syncUiFromService()
+            maybePromptForOverlayPermission()
         }
     }
 
@@ -506,6 +517,35 @@ class MainActivity : AppCompatActivity() {
         } else {
             true
         }
+    }
+
+    /**
+     * The floating widget is on by default but needs "Display over other apps". Ask once;
+     * if the user declines, the widget simply stays off and the switch still prompts later.
+     */
+    private fun maybePromptForOverlayPermission() {
+        val svc = service ?: return
+        if (isFinishing || isDestroyed) return
+        val prefs = getSharedPreferences(FloatingWidgetPolicy.PREFS_NAME, MODE_PRIVATE)
+        val prompt = FloatingWidgetPolicy.shouldPromptForPermission(
+            savedEnabled = svc.isFloatingWanted,
+            canDrawOverlays = checkOverlayPermission(),
+            alreadyPrompted = prefs.getBoolean(FloatingWidgetPolicy.PREF_PERMISSION_PROMPTED, false)
+        )
+        if (!prompt) return
+        prefs.edit().putBoolean(FloatingWidgetPolicy.PREF_PERMISSION_PROMPTED, true).apply()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Show the floating heart-rate widget?")
+            .setMessage("The widget floats over other apps. Android needs your OK under \"Display over other apps\". Tap it any time to open this app.")
+            .setPositiveButton("Allow") { _, _ ->
+                try {
+                    requestOverlayPermission()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Open Settings > Apps > Special access to allow overlays", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     private fun requestOverlayPermission() {
