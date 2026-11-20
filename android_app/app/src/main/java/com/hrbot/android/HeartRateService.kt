@@ -160,6 +160,10 @@ class HeartRateService : Service() {
         private set
     var isFloatingEnabled = false
         private set
+    // The user's saved choice; defaults to on for new installs (see FloatingWidgetPolicy).
+    val isFloatingWanted: Boolean
+        get() = getSharedPreferences(FloatingWidgetPolicy.PREFS_NAME, MODE_PRIVATE)
+            .getBoolean(FloatingWidgetPolicy.PREF_ENABLED, FloatingWidgetPolicy.DEFAULT_ENABLED)
     var isShowBpmEnabled = true
         private set
     var isHeartbeatSoundEnabled = false
@@ -838,6 +842,18 @@ class HeartRateService : Service() {
         saveFloatingSettings()
     }
 
+    /** Shows the widget if it is wanted but was blocked on the overlay permission, which is now granted. */
+    fun retryFloatingIfPermitted() {
+        if (FloatingWidgetPolicy.shouldShowAfterPermissionChange(
+                savedEnabled = isFloatingWanted,
+                currentlyShown = floatingManager != null,
+                canDrawOverlays = android.provider.Settings.canDrawOverlays(this)
+            )
+        ) {
+            toggleFloating(true, force = true)
+        }
+    }
+
     fun toggleShowBpm(enabled: Boolean) {
         if (isShowBpmEnabled == enabled) return
         isShowBpmEnabled = enabled
@@ -928,13 +944,14 @@ class HeartRateService : Service() {
     }
 
     private fun saveFloatingSettings() {
-        val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
-        prefs.edit().putBoolean("floating_enabled", isFloatingEnabled).apply()
+        val prefs = getSharedPreferences(FloatingWidgetPolicy.PREFS_NAME, MODE_PRIVATE)
+        prefs.edit().putBoolean(FloatingWidgetPolicy.PREF_ENABLED, isFloatingEnabled).apply()
     }
 
     private fun loadFloatingSettings() {
-        val prefs = getSharedPreferences("hr_bot_prefs", MODE_PRIVATE)
-        isFloatingEnabled = prefs.getBoolean("floating_enabled", false)
+        // Only report "on" if the overlay can really be shown; otherwise the UI would flip its
+        // switch on and run the permission flow by itself. MainActivity prompts / retries instead.
+        isFloatingEnabled = isFloatingWanted && android.provider.Settings.canDrawOverlays(this)
         if (isFloatingEnabled) {
             // Wait a bit for the system to be ready
             handler.postDelayed({
